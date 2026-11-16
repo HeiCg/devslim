@@ -1,0 +1,19 @@
+{
+  "name": "devslim",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Emulador Android e simulador iOS economicos em RAM/CPU (lib + CLI)",
+  "type": "module",
+  "bin": {
+    "devslim": "bin/devslim"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=2"
+  },
+  "engines": {
+    "node": ">=25"
+  }
+}

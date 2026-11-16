@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "platform": "android",
+      "avd": "qa-tablet-api35",
+      "serial": "emulator-5554",
+      "pid": 7887,
+      "port": 5554,
+      "startedAt": "2026-11-16T17:21:16.108Z"
+    }
+  ]
+}
