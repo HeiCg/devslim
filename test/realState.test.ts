@@ -167,5 +167,11 @@ test('state real antigo (sem profile.grpc) = grpc ligado implicito em plan e up;
   const args: string[] = fake.spawnCalls[0].args;
   assert.deepEqual(args.slice(args.indexOf('-port'), args.indexOf('-port') + 5), ['-port', '5554', '-grpc', '8554', '-grpc-use-token']);
   assert.match(up.stderr, /emulador nao se anunciou em /, 'fake nao grava running ini: aviso');
-  assert.deepEqual(readFileSync(join(home, 'state', 'android', `${AVD}.json`)), before);
+  // O up so acrescenta o lastLaunch (o -memory deste lancamento); o perfil
+  // antigo continua sem o campo grpc.
+  const after = JSON.parse(readFileSync(join(home, 'state', 'android', `${AVD}.json`), 'utf8'));
+  assert.ok(!('grpc' in after.profile), 'perfil nao ganha grpc');
+  assert.equal(after.lastLaunch.ramMb, p.profile.ramMb);
+  delete after.lastLaunch;
+  assert.deepEqual(after, JSON.parse(before.toString()));
 });

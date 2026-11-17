@@ -17,15 +17,16 @@ import { dirSize, sizeText } from './dirSize.ts';
 import { isSoftwareGpu, parseRamMb, readEffectiveHardware } from './android/hardwareQemu.ts';
 import { classifyLauncher, launcherText, listQemuProcesses } from './android/launcher.ts';
 import { findRunningEntry, isAdvertised, scanRunning } from './android/runningIni.ts';
-import { listStates, loadState, type AndroidState } from './state.ts';
+import { launchedRamMb, listStates, loadState, type AndroidState } from './state.ts';
 import { DEFAULT_API, imageTag, isAtdTag, isGoogleApisTag } from './android/images.ts';
 import { formatDuration } from './idle.ts';
+import { androidOrphans, iosOrphans } from './orphans.ts';
 
 // `devslim doctor`: so leitura. Nunca chama adb, nunca executa o argent,
 // nunca apaga nada. Checagens por AVD/device: avd-gpu e avd-ram dao uma linha
 // por AVD (ultimo boot); profile-drift, avd-image, running-off-profile, emulator-advertised,
-// default-boot-snapshot, orphan-images e ios-always-enabled dao uma linha por
-// ocorrencia (ou um unico ok).
+// default-boot-snapshot, orphan-images, ios-always-enabled e orphan-state dao
+// uma linha por ocorrencia (ou um unico ok).
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 export type Check = Readonly<{ id: string; level: CheckLevel; message: string; fix?: string }>;
@@ -166,17 +167,29 @@ function checkAvdGpu(list: readonly AvdInfo[], home: string): Check[] {
   });
 }
 
-function checkAvdRam(list: readonly AvdInfo[], home: string): Check[] {
+// Pedido = -memory do ultimo up/bake (lastLaunch no state) quando ha; senao o
+// hw.ramSize do config.ini (state antigo ou AVD sem state).
+function checkAvdRam(list: readonly AvdInfo[], home: string, env: Runtime['env']): Check[] {
   if (list.length === 0) return [check('avd-ram', 'ok', `nenhum AVD em ${home}`)];
   return list.map((a) => {
     const hq = readIni(join(a.dir, 'hardware-qemu.ini'));
-    const cfg = readIni(a.configPath);
     const runtime = hq === null ? null : parseRamMb(getValue(hq, 'hw.ramSize'));
-    const asked = cfg === null ? null : parseRamMb(getValue(cfg, 'hw.ramSize'));
+    let launched: number | null = null;
+    try {
+      launched = launchedRamMb(loadState<AndroidState>('android', a.name, { env }));
+    } catch {
+      launched = null; // state ilegivel: config.ini
+    }
+    let asked = launched;
+    if (asked === null) {
+      const cfg = readIni(a.configPath);
+      asked = cfg === null ? null : parseRamMb(getValue(cfg, 'hw.ramSize'));
+    }
+    const askedText = launched !== null ? 'pedidos no ultimo up/bake' : 'do config.ini';
     if (runtime === null) return check('avd-ram', 'ok', `${a.name}: sem hw.ramSize no hardware-qemu.ini (nao bootou desde o ultimo tune)`);
     const why: string[] = [];
     const raised = asked !== null && runtime > asked;
-    if (raised) why.push(`acima dos ${asked} MB do config.ini (emulador elevou)`);
+    if (raised) why.push(`acima dos ${asked} MB ${askedText} (emulador elevou)`);
     if (runtime > RAM_WARN_MB) why.push(`acima de ${RAM_WARN_MB} MB`);
     if (why.length > 0) {
       // Elevou: o emulador ignora -memory abaixo do piso sem lowram; tela menor nao ajuda (medido).
@@ -185,7 +198,8 @@ function checkAvdRam(list: readonly AvdInfo[], home: string): Check[] {
         : `devslim android tune ${a.name} (e suba com devslim android up, que passa -memory)`;
       return check('avd-ram', 'warn', `${a.name}: ultimo boot usou ${runtime} MB, ${why.join(' e ')}`, fix);
     }
-    return check('avd-ram', 'ok', `${a.name}: ${runtime} MB${asked !== null ? ` (config.ini ${asked} MB)` : ''}`);
+    const askedNote = asked === null ? '' : launched !== null ? ` (pedido no ultimo up/bake ${asked} MB)` : ` (config.ini ${asked} MB)`;
+    return check('avd-ram', 'ok', `${a.name}: ${runtime} MB${askedNote}`);
   });
 }
 
@@ -530,6 +544,25 @@ async function checkStaleSession(rt: Runtime): Promise<Check[]> {
   return out;
 }
 
+// State do devslim cujo AVD ou simulador nao existe mais. So le; o fix e o
+// `forget`, que apaga o registro sem tocar em device. Sem simctl, os states iOS
+// ficam como nao verificados.
+async function checkOrphanState(rt: Runtime): Promise<Check[]> {
+  const out: Check[] = androidOrphans(rt.env).map((o) =>
+    check('orphan-state', 'warn', `${o.path}: AVD ${o.name} nao existe mais (state orfao)`, o.forget),
+  );
+  const iosIds = listStates('ios', { env: rt.env });
+  if (iosIds.length > 0) {
+    const ios = iosOrphans(rt.env, await listSimDevices(rt));
+    if (ios === null) {
+      out.push(check('orphan-state', 'warn', `${iosIds.length} state(s) iOS nao verificado(s): xcrun simctl list devices -j falhou`));
+    } else {
+      for (const o of ios) out.push(check('orphan-state', 'warn', `${o.path}: simulador ${o.name} (${o.id}) nao existe mais (state orfao)`, o.forget));
+    }
+  }
+  return out.length > 0 ? out : [check('orphan-state', 'ok', 'nenhum state orfao (todo state aponta para AVD ou simulador existente)')];
+}
+
 export async function runDoctor(ctx: DoctorContext = {}): Promise<Check[]> {
   const rt = resolveRuntime(ctx);
   const root = findSdkRoot(rt.env);
@@ -541,7 +574,7 @@ export async function runDoctor(ctx: DoctorContext = {}): Promise<Check[]> {
     checkAndroidSdk(rt.env, root),
     checkEmulatorVersion(root),
     ...checkAvdGpu(list, home),
-    ...checkAvdRam(list, home),
+    ...checkAvdRam(list, home, rt.env),
     ...checkProfileDrift(rt.env),
     ...checkAvdImage(rt.env),
     ...(await checkRunningOffProfile(rt)),
@@ -552,6 +585,7 @@ export async function runDoctor(ctx: DoctorContext = {}): Promise<Check[]> {
     await checkSwap(rt),
     ...(await checkIosAlwaysEnabled(rt, ctx)),
     ...(await checkStaleSession(rt)),
+    ...(await checkOrphanState(rt)),
   ];
 }
 

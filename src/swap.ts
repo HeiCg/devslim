@@ -23,6 +23,8 @@ function toMb(num: string, unit: string): number {
 }
 
 // `total = 18432.00M  used = 17704.94M  free = 727.06M  (encrypted)`; aceita virgula decimal.
+// Sem arquivo de swap ainda o macOS reporta `total = 0.00M  used = 0.00M`:
+// leitura valida, ratio 0. Total 0 com uso acima de 0 nao faz sentido: ratio null.
 export function parseSwapUsage(text: string): SwapUsage | null {
   const field = (name: string) => new RegExp(`${name}\\s*=\\s*(\\d+(?:[.,]\\d+)?)\\s*([KMGT]?)`, 'i').exec(text);
   const total = field('total');
@@ -30,7 +32,8 @@ export function parseSwapUsage(text: string): SwapUsage | null {
   if (!total || !used) return null;
   const totalMb = toMb(total[1], total[2]);
   const usedMb = toMb(used[1], used[2]);
-  return Object.freeze({ totalMb, usedMb, ratio: totalMb > 0 ? usedMb / totalMb : null });
+  const ratio = totalMb > 0 ? usedMb / totalMb : usedMb === 0 ? 0 : null;
+  return Object.freeze({ totalMb, usedMb, ratio });
 }
 
 export type SwapStatus = Readonly<{ usedMb: number | null; totalMb: number | null; percent: number | null }>;
@@ -55,9 +58,13 @@ export type SwapAssessment = Readonly<{ level: SwapLevel; message: string; fix?:
 export const SWAP_FAIL_FIX = 'feche apps, sessoes e devices ociosos antes de subir device';
 export const SWAP_WARN_FIX = 'feche algo antes de subir device';
 
+// Sem arquivo de swap (total 0): nada em uso.
+export const NO_SWAP_FILE_TEXT = '0 MB em uso (sem arquivo de swap)';
+
 // Mesmo texto no doctor e na recusa do boot. `percent` null = nao lido (warn).
 export function assessSwap(s: SwapStatus): SwapAssessment {
   if (s.percent === null) return Object.freeze({ level: 'warn', message: 'sysctl vm.swapusage nao lido' });
+  if (s.totalMb === 0) return Object.freeze({ level: 'ok', message: `swap com ${NO_SWAP_FILE_TEXT}` });
   const text = `swap em ${s.percent}% (${s.usedMb} de ${s.totalMb} MB)`;
   if (s.percent > SWAP_FAIL_PERCENT) return Object.freeze({ level: 'fail', message: `${text}: nao boote device agora`, fix: SWAP_FAIL_FIX });
   if (s.percent > SWAP_WARN_PERCENT) return Object.freeze({ level: 'warn', message: `${text}: acima de ${SWAP_WARN_PERCENT}%`, fix: SWAP_WARN_FIX });

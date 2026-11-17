@@ -199,6 +199,39 @@ test('bake recusa AVD rodando', async () => {
   await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), ctx), /esta rodando \(emulator-5554\); desligue antes do bake/);
 });
 
+test('up grava lastLaunch {ramMb, lowRam, at} no state do AVD tunado; AVD sem state nao ganha state', async () => {
+  const { ctx, env } = world();
+  tuneAvd(AVD, buildAndroidProfile(), { env }); // perfil 2048
+  await upAvd(AVD, buildAndroidProfile({ ramMb: 4096 }), ctx); // up --ram 4096 sem tune
+  const st = loadState<AndroidState>('android', AVD, { env })!;
+  assert.deepEqual(st.lastLaunch, { ramMb: 4096, lowRam: false, at: '2026-11-16T12:00:00.000Z' });
+  assert.equal(st.profile.ramMb, 2048, 'perfil do tune intacto');
+  assert.equal(typeof st.originalConfigIni, 'string');
+
+  const other = world();
+  const fresh = join(avdHome, 'fresh-api35.avd');
+  mkdirSync(fresh, { recursive: true });
+  writeFileSync(join(avdHome, 'fresh-api35.ini'), `path=${fresh}\n`);
+  writeFileSync(join(fresh, 'config.ini'), PHONE);
+  await downAvd(undefined, ctx);
+  await upAvd('fresh-api35', buildAndroidProfile(), other.ctx);
+  assert.equal(loadState('android', 'fresh-api35', { env: other.env }), null);
+});
+
+test('bake grava lastLaunch; re-tune que reescreve o config.ini descarta, re-tune sem mudanca mantem', async () => {
+  const { ctx, env } = world();
+  tuneAvd(AVD, buildAndroidProfile(), { env });
+  await bakeAvd(AVD, buildAndroidProfile({ lowRam: true }), ctx);
+  const baked = loadState<AndroidState>('android', AVD, { env })!;
+  assert.deepEqual(baked.lastLaunch, { ramMb: 2048, lowRam: true, at: '2026-11-16T12:00:00.000Z' });
+  assert.equal(baked.bakedAt, '2026-11-16T12:00:00.000Z', 'state do bake junto');
+
+  tuneAvd(AVD, buildAndroidProfile(), { env }); // mesmo perfil: nada escrito
+  assert.deepEqual(loadState<AndroidState>('android', AVD, { env })!.lastLaunch, baked.lastLaunch);
+  tuneAvd(AVD, buildAndroidProfile({ ramMb: 3072 }), { env }); // reescreve e apaga o hardware-qemu.ini
+  assert.equal(loadState<AndroidState>('android', AVD, { env })!.lastLaunch, undefined);
+});
+
 test('bake: sobe sem snapshot, enxuga, grava state, snapshot slim_base, emu kill, espera sair', async () => {
   const { fake, ctx, env } = world({
     spawned: { installed: INSTALLED, disabled: ['com.google.android.youtube'], bootSteps: 2, settings: { 'global/auto_sync': '1' } },

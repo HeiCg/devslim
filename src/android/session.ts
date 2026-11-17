@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DevslimError } from '../errors.ts';
 import type { Exec } from '../exec.ts';
@@ -6,6 +7,7 @@ import { writeFileAtomic } from '../fsAtomic.ts';
 import { devslimHome } from '../state.ts';
 import { DEFAULT_EXIT_TIMEOUT_MS, type Adb, type AdbDevice } from './adb.ts';
 import { runningLocks } from './avd.ts';
+import { nodePidAlive, type PidAlive } from './runningIni.ts';
 import { parseSwapUsage, SWAP_WARN_PERCENT, type SwapUsage } from '../swap.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -54,6 +56,139 @@ export function loadSession(env: Env = process.env): SessionEntry[] {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Lock consultivo da sessao. `up`, `down` e o watcher do auto-desligar sao
+// processos separados que fazem read-modify-write de session.json; toda escrita
+// passa por withSessionLock (leitura, mudanca e gravacao numa secao critica).
+// O lock e `session.json.lock`, criado com `wx` e com o pid dono e a hora.
+// Mais velho que SESSION_LOCK_STALE_MS ou de pid morto = abandonado: e apagado
+// (se ainda for o mesmo arquivo) e a tomada recomeca. Leitura nao trava: a
+// gravacao e atomica (fsAtomic), quem le ve a sessao inteira antiga ou nova.
+
+export const SESSION_LOCK_TIMEOUT_MS = 5_000;
+export const SESSION_LOCK_STALE_MS = 30_000;
+export const SESSION_LOCK_STEP_MS = 50;
+
+// Sincrono de proposito: as funcoes de escrita da sessao sao sincronas e o
+// processo nao tem o que fazer enquanto espera o lock.
+export type SessionLockOptions = {
+  sleep?: (ms: number) => void;
+  now?: () => number;
+  pidAlive?: PidAlive;
+  pid?: number; // dono gravado no lock; padrao process.pid
+  timeoutMs?: number;
+  staleMs?: number;
+  stepMs?: number;
+};
+
+const sleepSync = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
+export function sessionLockPath(env: Env = process.env): string {
+  return `${sessionPath(env)}.lock`;
+}
+
+type HeldLock = { raw: string; pid: number | null; atMs: number | null; token: string | null };
+
+// null = sem arquivo. Conteudo ilegivel (dono acabou de criar e ainda nao
+// escreveu) vem com pid/atMs null; a idade sai do mtime.
+function readLock(path: string): HeldLock | null {
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch (err) {
+    if ((err as { code?: string }).code === 'ENOENT') return null;
+    throw err;
+  }
+  try {
+    const d = JSON.parse(raw) as { pid?: unknown; at?: unknown; token?: unknown };
+    const at = typeof d.at === 'string' ? Date.parse(d.at) : NaN;
+    return {
+      raw,
+      pid: Number.isInteger(d.pid) ? (d.pid as number) : null,
+      atMs: Number.isFinite(at) ? at : null,
+      token: typeof d.token === 'string' ? d.token : null,
+    };
+  } catch {
+    return { raw, pid: null, atMs: null, token: null };
+  }
+}
+
+function lockAgeMs(path: string, held: HeldLock, now: number): number | null {
+  if (held.atMs !== null) return now - held.atMs;
+  try {
+    return now - statSync(path).mtimeMs;
+  } catch {
+    return null; // sumiu: a proxima volta tenta criar
+  }
+}
+
+export function withSessionLock<T>(env: Env, fn: () => T, o: SessionLockOptions = {}): T {
+  const path = sessionLockPath(env);
+  const now = o.now ?? Date.now;
+  const sleep = o.sleep ?? sleepSync;
+  const pidAlive = o.pidAlive ?? nodePidAlive;
+  const timeoutMs = o.timeoutMs ?? SESSION_LOCK_TIMEOUT_MS;
+  const staleMs = o.staleMs ?? SESSION_LOCK_STALE_MS;
+  const stepMs = o.stepMs ?? SESSION_LOCK_STEP_MS;
+  const token = randomUUID();
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    let fd: number | undefined;
+    try {
+      fd = openSync(path, 'wx', 0o600);
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'EEXIST') throw err;
+    }
+    if (fd !== undefined) {
+      try {
+        writeSync(fd, JSON.stringify({ pid: o.pid ?? process.pid, at: new Date(now()).toISOString(), token }) + '\n');
+      } finally {
+        closeSync(fd);
+      }
+      break;
+    }
+    const held = readLock(path);
+    if (held === null) continue; // soltaram entre o open e a leitura
+    const age = lockAgeMs(path, held, now());
+    const stale = (age !== null && age > staleMs) || (held.pid !== null && !pidAlive(held.pid));
+    if (stale) {
+      // So apaga se ainda e o mesmo lock abandonado (outro pode ter tomado).
+      if (readLock(path)?.raw === held.raw) {
+        try {
+          unlinkSync(path);
+        } catch (err) {
+          if ((err as { code?: string }).code !== 'ENOENT') throw err;
+        }
+      }
+      continue;
+    }
+    if (now() >= deadline) {
+      throw new DevslimError(
+        `sessao ocupada: timeout de ${timeoutMs / 1000} s esperando o lock ${path} (dono pid ${held.pid ?? '?'}); ` +
+          'se esse processo travou, encerre-o ou apague o arquivo',
+      );
+    }
+    sleep(stepMs);
+  }
+
+  try {
+    return fn();
+  } finally {
+    // Solta so o proprio lock: se alguem o julgou abandonado e pos o dele, fica.
+    if (readLock(path)?.token === token) {
+      try {
+        unlinkSync(path);
+      } catch {
+        // ja saiu
+      }
+    }
+  }
+}
+
 function saveSession(entries: readonly SessionEntry[], env: Env): void {
   const path = sessionPath(env);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -63,17 +198,19 @@ function saveSession(entries: readonly SessionEntry[], env: Env): void {
 
 // Uma entrada por AVD e por serial: registrar de novo substitui. No iOS so o
 // UDID identifica (dois simuladores podem ter o mesmo nome).
-export function recordSession(entry: SessionEntry, env: Env = process.env): SessionEntry[] {
-  const rest = loadSession(env).filter(
-    (e) =>
-      !(
-        e.platform === entry.platform &&
-        (e.serial === entry.serial || (entry.platform === 'android' && e.avd === entry.avd))
-      ),
-  );
-  const entries = [...rest, Object.freeze({ ...entry })];
-  saveSession(entries, env);
-  return entries;
+export function recordSession(entry: SessionEntry, env: Env = process.env, lock: SessionLockOptions = {}): SessionEntry[] {
+  return withSessionLock(env, () => {
+    const rest = loadSession(env).filter(
+      (e) =>
+        !(
+          e.platform === entry.platform &&
+          (e.serial === entry.serial || (entry.platform === 'android' && e.avd === entry.avd))
+        ),
+    );
+    const entries = [...rest, Object.freeze({ ...entry })];
+    saveSession(entries, env);
+    return entries;
+  }, lock);
 }
 
 // Reescreve as entradas que casam; devolve as novas (vazio = nada gravado).
@@ -81,24 +218,29 @@ export function updateSession(
   match: (e: SessionEntry) => boolean,
   update: (e: SessionEntry) => SessionEntry,
   env: Env = process.env,
+  lock: SessionLockOptions = {},
 ): SessionEntry[] {
-  const all = loadSession(env);
-  const changed: SessionEntry[] = [];
-  const entries = all.map((e) => {
-    if (!match(e)) return e;
-    const next = Object.freeze({ ...update(e) });
-    changed.push(next);
-    return next;
-  });
-  if (changed.length > 0) saveSession(entries, env);
-  return changed;
+  return withSessionLock(env, () => {
+    const all = loadSession(env);
+    const changed: SessionEntry[] = [];
+    const entries = all.map((e) => {
+      if (!match(e)) return e;
+      const next = Object.freeze({ ...update(e) });
+      changed.push(next);
+      return next;
+    });
+    if (changed.length > 0) saveSession(entries, env);
+    return changed;
+  }, lock);
 }
 
-export function removeSession(match: (e: SessionEntry) => boolean, env: Env = process.env): SessionEntry[] {
-  const all = loadSession(env);
-  const removed = all.filter(match);
-  if (removed.length > 0) saveSession(all.filter((e) => !match(e)), env);
-  return removed;
+export function removeSession(match: (e: SessionEntry) => boolean, env: Env = process.env, lock: SessionLockOptions = {}): SessionEntry[] {
+  return withSessionLock(env, () => {
+    const all = loadSession(env);
+    const removed = all.filter(match);
+    if (removed.length > 0) saveSession(all.filter((e) => !match(e)), env);
+    return removed;
+  }, lock);
 }
 
 // ---------------------------------------------------------------------------

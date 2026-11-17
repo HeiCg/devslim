@@ -96,7 +96,8 @@ test('parseSwapUsage: formato do macOS, virgula decimal e sufixos M/G', () => {
   const g = parseSwapUsage('total = 2,00G  used = 1,75G  free = 0,25G')!;
   assert.equal(g.totalMb, 2048);
   assert.equal(g.usedMb, 1792);
-  assert.equal(parseSwapUsage('total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)')!.ratio, null);
+  // macOS sem arquivo de swap ainda: total 0 e leitura valida, 0%.
+  assert.deepEqual(parseSwapUsage('total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)'), { totalMb: 0, usedMb: 0, ratio: 0 });
   assert.equal(parseSwapUsage('lixo'), null);
 });
 

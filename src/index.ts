@@ -23,8 +23,11 @@ export {
   recordAndroidTune,
   recordAndroidGuest,
   recordIosBackup,
+  recordAndroidLaunch,
+  requestedRamMb,
+  launchedRamMb,
 } from './state.ts';
-export type { AndroidState, IosState, IosProfileRecord, Platform, StateOptions } from './state.ts';
+export type { AndroidState, AndroidLaunchRecord, IosState, IosProfileRecord, Platform, StateOptions } from './state.ts';
 export {
   CAPABILITIES,
   isCapability,
@@ -128,6 +131,11 @@ export {
   recordSession,
   updateSession,
   removeSession,
+  withSessionLock,
+  sessionLockPath,
+  SESSION_LOCK_TIMEOUT_MS,
+  SESSION_LOCK_STALE_MS,
+  SESSION_LOCK_STEP_MS,
   runningEmulators,
   bootedSimulators,
   parseSimctlBooted,
@@ -138,7 +146,7 @@ export {
   swapWarning,
   SWAP_WARN_RATIO,
 } from './android/session.ts';
-export type { SessionEntry, IdleDownRecord, BootedSimulator, DeviceCensus, SwapUsage } from './android/session.ts';
+export type { SessionEntry, IdleDownRecord, BootedSimulator, DeviceCensus, SwapUsage, SessionLockOptions } from './android/session.ts';
 export {
   upAvd,
   bakeAvd,
@@ -262,8 +270,10 @@ export {
   SWAP_FAIL_PERCENT,
 } from './doctor.ts';
 export type { Check, CheckLevel, DoctorContext, DirSize } from './doctor.ts';
-export { downAll, measureAll } from './topLevel.ts';
-export { assessSwap, swapGate, SWAP_FAIL_FIX, SWAP_WARN_FIX } from './swap.ts';
+export { downAll, measureAll, pruneSession, staleDetail } from './topLevel.ts';
+export { androidOrphans, iosOrphans, forgetAvd, forgetSim, forgetCommand } from './orphans.ts';
+export type { OrphanState, ForgetResult } from './orphans.ts';
+export { assessSwap, swapGate, SWAP_FAIL_FIX, SWAP_WARN_FIX, NO_SWAP_FILE_TEXT } from './swap.ts';
 export type { SwapAssessment, SwapLevel } from './swap.ts';
 export { bytesToMb, sizeText } from './dirSize.ts';
 export {
@@ -280,7 +290,7 @@ export {
 export type { EffectiveHardware, LastBootRam } from './android/hardwareQemu.ts';
 export { classifyLauncher, parseQemuProcesses, listQemuProcesses, processCommandLine, launcherFor, launcherText } from './android/launcher.ts';
 export type { Launcher, QemuProcess } from './android/launcher.ts';
-export type { TopDownOutcome, AnyMeasurement } from './topLevel.ts';
+export type { TopDownOutcome, PruneOutcome, AnyMeasurement } from './topLevel.ts';
 
 // Auto-desligar (`up --idle-down`): duracao, primeiro plano, laco e watcher.
 export {

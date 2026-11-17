@@ -12,9 +12,9 @@ import { labelsToDisable } from './ios/labels.ts';
 import { createSimctl, type SimDevice } from './ios/simctl.ts';
 import type { IosContext } from './ios/slim.ts';
 import { findQemuPid } from './measure.ts';
-import { listStates, loadState, type AndroidState, type IosProfileRecord, type IosState } from './state.ts';
+import { listStates, loadState, requestedRamMb, type AndroidState, type IosProfileRecord, type IosState } from './state.ts';
 import type { Capability } from './capabilities.ts';
-import { readSwap, type SwapStatus } from './swap.ts';
+import { NO_SWAP_FILE_TEXT, readSwap, type SwapStatus } from './swap.ts';
 
 // `devslim status`: somente leitura. Nunca chama adb (subiria o daemon) nem
 // escreve nada; emulador rodando = lock no .avd ou `pgrep` do qemu. Quem
@@ -110,7 +110,7 @@ export type AndroidStatus = Readonly<{
   tuned: boolean;
   ramMb: number | null; // = ramRequestedMb (mantido por compatibilidade)
   gpu: string | null; // gpu pedida no tune
-  ramRequestedMb: number | null; // RAM do perfil do tune (-memory)
+  ramRequestedMb: number | null; // -memory do ultimo up/bake (lastLaunch); state antigo: o do perfil do tune
   ramEffectiveMb: number | null; // hw.ramSize do hardware-qemu.ini do ultimo boot; null sem o arquivo
   ramFloored: boolean; // efetiva acima da pedida: o emulador elevou
   gpuEffective: string | null; // hw.gpu.mode do hardware-qemu.ini do ultimo boot
@@ -219,7 +219,7 @@ async function androidStatus(rt: Runtime, session: readonly SessionEntry[]): Pro
     const launcher = running ? (await launcherFor(avd, { exec: rt.exec, pid, inSession, processes })).launcher : null;
     const hw = info === null ? null : readEffectiveHardware(info.dir);
     const entry = running ? findRunningEntry(announced, avd) : null;
-    const requested = st?.profile?.ramMb ?? null;
+    const requested = requestedRamMb(st); // ultimo up/bake (lastLaunch), senao o perfil do tune
     const effective = hw?.ramMb ?? null;
     out.push(Object.freeze({
       avd,
@@ -295,7 +295,9 @@ export function statusText(s: StatusReport): string[] {
     const p = d.profile;
     const caps = p !== null && p.capabilities.length > 0 ? ` (capacidades ${p.capabilities.join(',')})` : '';
     const store = d.disabledInStore === null ? 'store ilegivel ou ausente' : `store ${d.disabledInStore}/${d.expected} desligados`;
-    lines.push(`ios ${d.name} (${d.udid}) ${d.state}: perfil ${d.expected ?? '?'} labels${caps}, ${store}${d.drift ? ', DRIFT (rode devslim ios up de novo)' : ''}`);
+    // State de simulador que nao existe mais: so o registro sobra.
+    const orphan = d.state === 'missing' ? `, simulador nao existe mais; state orfao: devslim ios forget ${d.udid}` : '';
+    lines.push(`ios ${d.name} (${d.udid}) ${d.state}: perfil ${d.expected ?? '?'} labels${caps}, ${store}${d.drift ? ', DRIFT (rode devslim ios up de novo)' : ''}${orphan}`);
   }
   for (const a of s.android) {
     const parts: string[] = [];
@@ -304,7 +306,11 @@ export function statusText(s: StatusReport): string[] {
       parts.push(a.exists ? `baked ${a.baked ? 'sim' : 'nao'}` : 'AVD nao encontrado');
     } else {
       parts.push(
-        a.exists ? (a.tuned ? `tunado (${ramText(a)}, ${gpuText(a)})` : 'nao tunado') : `AVD nao encontrado (${a.dir ?? '?'})`,
+        a.exists
+          ? a.tuned
+            ? `tunado (${ramText(a)}, ${gpuText(a)})`
+            : 'nao tunado'
+          : `AVD nao encontrado (${a.dir ?? '?'}); state orfao: devslim android forget ${a.avd}`,
         `baked ${a.baked ? 'sim' : 'nao'}`,
       );
     }
@@ -324,6 +330,8 @@ export function statusText(s: StatusReport): string[] {
   if (s.android.length === 0) lines.push('android: nenhum AVD com state nem emulador rodando');
   if (s.session.length === 0) lines.push('sessao: vazia');
   const w = s.swap;
-  lines.push(w.percent === null ? 'swap: nao lido' : `swap: ${w.usedMb} de ${w.totalMb} MB (${w.percent}%)`);
+  if (w.percent === null) lines.push('swap: nao lido');
+  else if (w.totalMb === 0) lines.push(`swap: ${NO_SWAP_FILE_TEXT}`);
+  else lines.push(`swap: ${w.usedMb} de ${w.totalMb} MB (${w.percent}%)`);
   return lines;
 }

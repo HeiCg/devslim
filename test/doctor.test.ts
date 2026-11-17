@@ -6,7 +6,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import { applyProfile, parseIni, serializeIni, setValue } from '../src/android/configIni.ts';
 import { buildAndroidProfile, type AndroidProfileOptions } from '../src/android/profile.ts';
 import { recordSession } from '../src/android/session.ts';
-import { recordAndroidTune } from '../src/state.ts';
+import { loadState, recordAndroidTune, saveState, type AndroidState } from '../src/state.ts';
 import { main } from '../src/cli.ts';
 import { dirSize, doctorExitCode, runDoctor, type Check, type DoctorContext } from '../src/doctor.ts';
 import { createFakeExec, type FakeCall } from '../src/exec.ts';
@@ -135,7 +135,7 @@ test('ordem e ids: todas as checagens aparecem, ambiente limpo = so ok, exit 0',
   const ids = [...new Set(checks.map((c) => c.id))];
   assert.deepEqual(ids, [
     'node', 'xcode', 'android-sdk', 'emulator-version', 'avd-gpu', 'avd-ram', 'profile-drift', 'avd-image', 'running-off-profile', 'emulator-advertised', 'argent-gpu',
-    'default-boot-snapshot', 'orphan-images', 'swap', 'ios-always-enabled', 'stale-session',
+    'default-boot-snapshot', 'orphan-images', 'swap', 'ios-always-enabled', 'stale-session', 'orphan-state',
   ]);
   assert.deepEqual(checks.filter((c) => c.level !== 'ok'), []);
   assert.equal(doctorExitCode(checks), 0);
@@ -221,6 +221,27 @@ test('avd-ram: runtime acima do config.ini ou acima de 3072 = warn; igual = ok',
   assert.equal(by.certo.level, 'ok');
 });
 
+test('avd-ram: compara com a RAM do ultimo up/bake (lastLaunch) quando ha; sem o campo, config.ini', async () => {
+  const { env, ctx } = setup();
+  const launched = (name: string, dir: string, ramMb: number) => {
+    const profile = buildAndroidProfile({});
+    recordAndroidTune(name, { avdDir: dir, originalConfigIni: 'x', originalConfigSha256: 'y', profile }, { env });
+    const st = loadState<AndroidState>('android', name, { env })!;
+    saveState('android', name, { ...st, lastLaunch: { ramMb, lowRam: false, at: '2026-11-17T09:00:00.000Z' } }, { env });
+  };
+  // up --ram 3072 sem tune: config.ini segue 2048, emulador usou 3072 = pedido valeu.
+  launched('override', makeAvd('override', { config: 'hw.ramSize=2048\n', hq: 'hw.ramSize = 3072\n' }), 3072);
+  // ultimo up pediu 2048 e o emulador elevou para 2560: continua warn.
+  launched('elevado', makeAvd('elevado', { config: 'hw.ramSize=2048\n', hq: 'hw.ramSize = 2560\n' }), 2048);
+  const c = only(await runDoctor(ctx), 'avd-ram');
+  const by = Object.fromEntries(c.map((x) => [x.message.split(':')[0], x]));
+  assert.equal(by.override.level, 'ok');
+  assert.equal(by.override.message, 'override: 3072 MB (pedido no ultimo up/bake 3072 MB)');
+  assert.equal(by.elevado.level, 'warn');
+  assert.match(by.elevado.message, /ultimo boot usou 2560 MB, acima dos 2048 MB pedidos no ultimo up\/bake \(emulador elevou\)/);
+  assert.match(by.elevado.fix!, /--lowram/);
+});
+
 test('argent-gpu: argent no PATH sem a variavel = warn com export; host = ok; sem argent = ok', async () => {
   const exe = join(bin, 'argent');
   writeFileSync(exe, '#!/bin/sh\nexit 99\n');
@@ -274,6 +295,13 @@ test('swap: ate 80% ok, acima warn, acima de 95% fail e exit 1', async () => {
   assert.equal(c.level, 'fail');
   assert.match(c.message, /nao boote device agora/);
   assert.equal(doctorExitCode(high), 1);
+});
+
+test('swap: sem arquivo de swap (total 0) = ok com 0 MB em uso, nao "nao lido"; lixo = warn nao lido', async () => {
+  const zero = only(await runDoctor(setup({ swap: 'total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)' }).ctx), 'swap');
+  assert.deepEqual(zero.map((c) => [c.level, c.message]), [['ok', 'swap com 0 MB em uso (sem arquivo de swap)']]);
+  const junk = only(await runDoctor(setup({ swap: 'lixo' }).ctx), 'swap');
+  assert.deepEqual(junk.map((c) => [c.level, c.message]), [['warn', 'sysctl vm.swapusage nao lido']]);
 });
 
 test('swap: doctor e up concordam nos limites (mesma constante de src/swap.ts) e na mensagem', async () => {

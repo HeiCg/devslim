@@ -209,6 +209,10 @@ export function idleUpLine(w: IdleWatcherInfo): string {
   return `auto-desligar: apos ${formatDuration(w.ms)} sem app em uso (watcher pid ${w.watcherPid}, log ${w.logFile})`;
 }
 
-export function idleSkippedWarning(what: string): string {
+// `why`: motivo concreto (ex. simulador ja bootado e enxuto, que o up nao reboota).
+export function idleSkippedWarning(what: string, why?: string): string {
+  if (why !== undefined) return `devslim: aviso: auto-desligar ignorado: ${what}: ${why} (nada na sessao)\n`;
   return `devslim: aviso: auto-desligar ignorado: ${what} nao foi subido pelo devslim (nada na sessao)\n`;
 }
+
+export const IOS_ALREADY_SLIM_REASON = 'simulador ja estava bootado e enxuto; devslim nao o subiu';

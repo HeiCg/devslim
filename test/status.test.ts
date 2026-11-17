@@ -9,7 +9,7 @@ import { main } from '../src/cli.ts';
 import { createFakeExec, type FakeCall } from '../src/exec.ts';
 import { serializeStorePlist, storePath } from '../src/ios/disabledStore.ts';
 import { labelsToDisable } from '../src/ios/labels.ts';
-import { recordAndroidTune, recordIosBackup } from '../src/state.ts';
+import { loadState, recordAndroidTune, recordIosBackup, saveState, type AndroidState } from '../src/state.ts';
 import { collectStatus } from '../src/status.ts';
 
 const UDID = 'DBF8B093-58A2-4B57-812A-60D6CF8594BD';
@@ -274,6 +274,38 @@ test('status: RAM efetiva igual a pedida; sem hardware-qemu.ini so a pedida; gpu
   assert.match(stdout, /^android same-api35: tunado \(ram pedida 2048 MB, efetiva 2048 MB, gpu pedida host, efetiva swiftshader_indirect\), /m);
   assert.match(stdout, /^android fresh-api35: tunado \(ram pedida 2048 MB, gpu host\), /m);
   assert.doesNotMatch(stdout, /elevou|piso/);
+});
+
+// lastLaunch: o que o ultimo up/bake pediu de fato (up --ram sem tune).
+function lastLaunch(avd: string, ramMb: number, lowRam = false): void {
+  const st = loadState<AndroidState>('android', avd, { env })!;
+  saveState('android', avd, { ...st, lastLaunch: { ramMb, lowRam, at: '2026-11-17T09:00:00.000Z' } }, { env });
+}
+
+test('status: up --ram 4096 sem tune (lastLaunch) com efetiva 4096 nao conta como elevado', async () => {
+  const dir = makeAvd('over-api35'); // perfil do tune: 2048
+  lastLaunch('over-api35', 4096);
+  writeFileSync(join(dir, 'hardware-qemu.ini'), 'hw.ramSize = 4096\nhw.gpu.mode = host\n');
+  const exec = fakeExec();
+  const { report, stdout } = await statusOut({ env, exec, storeBase }, exec);
+  const a = report.android[0];
+  assert.deepEqual([a.ramRequestedMb, a.ramEffectiveMb, a.ramFloored], [4096, 4096, false]);
+  assert.match(stdout, /^android over-api35: tunado \(ram pedida 4096 MB, efetiva 4096 MB, gpu host\), /m);
+  assert.doesNotMatch(stdout, /elevou/);
+});
+
+test('status: lastLaunch 2048 com efetiva 2560 continua elevado; sem lastLaunch cai no perfil do tune', async () => {
+  const raised = makeAvd('raised-api35', { ramMb: 4096 }); // perfil 4096, mas o ultimo up pediu 2048
+  lastLaunch('raised-api35', 2048);
+  writeFileSync(join(raised, 'hardware-qemu.ini'), 'hw.ramSize = 2560\n');
+  const old = makeAvd('old-api35'); // state antigo, sem o campo: perfil 2048
+  writeFileSync(join(old, 'hardware-qemu.ini'), 'hw.ramSize = 2560\n');
+  const exec = fakeExec();
+  const { report, stdout } = await statusOut({ env, exec, storeBase }, exec);
+  const by = Object.fromEntries(report.android.map((a) => [a.avd, a]));
+  assert.deepEqual([by['raised-api35'].ramRequestedMb, by['raised-api35'].ramFloored], [2048, true]);
+  assert.deepEqual([by['old-api35'].ramRequestedMb, by['old-api35'].ramFloored], [2048, true]);
+  assert.match(stdout, /^android raised-api35: tunado \(ram pedida 2048 MB, efetiva 2560 MB \(emulador elevou\)/m);
 });
 
 // Linhas reais (2026-11-16): o argent lanca sem -memory/-cores e com -netfast.

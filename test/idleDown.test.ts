@@ -10,6 +10,7 @@ import { runDoctor } from '../src/doctor.ts';
 import { createFakeExec, type FakeCall } from '../src/exec.ts';
 import { DEVSLIM_BIN } from '../src/idle.ts';
 import { createFakeIos, type FakeIosOptions } from '../src/ios/fakeIos.ts';
+import { labelsToDisable } from '../src/ios/labels.ts';
 import { collectStatus, statusText } from '../src/status.ts';
 import { downAll } from '../src/topLevel.ts';
 
@@ -255,12 +256,31 @@ test('ios up --idle-down 1h: watcher com o UDID, sessao e linha no texto; segund
   assert.equal(fake.sims.get(SIM)!.state, 'Shutdown');
 });
 
-test('ios up --idle-down em simulador ja bootado fora da sessao: aviso, nenhum watcher', async () => {
-  const { fake, call } = ios({ simulators: [{ udid: SIM, name: 'QA-iPhone17', state: 'Booted' }] });
+test('ios up --idle-down em simulador ja bootado e enxuto fora da sessao: aviso com o motivo, nenhum watcher', async () => {
+  const live = Object.fromEntries(labelsToDisable().map((l) => [l, true]));
+  const { fake, env, call } = ios({ simulators: [{ udid: SIM, name: 'QA-iPhone17', state: 'Booted', live }] });
   const r = await call(['ios', 'up', 'QA-iPhone17', '--idle-down', '30m']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stderr, /auto-desligar ignorado: simulador QA-iPhone17 \(DBF8B093-58A2-4B57-812A-60D6CF8594BD\) nao foi subido pelo devslim/);
+  assert.match(
+    r.stderr,
+    /auto-desligar ignorado: simulador QA-iPhone17 \(DBF8B093-58A2-4B57-812A-60D6CF8594BD\): simulador ja estava bootado e enxuto; devslim nao o subiu \(nada na sessao\)/,
+  );
   assert.equal(fake.spawnCalls.length, 0);
+  assert.deepEqual(loadSession(env), []);
+});
+
+test('ios up --idle-down em simulador ja bootado fora do perfil: o reboot e do devslim, watcher sobe; ios down sem --force', async () => {
+  const { fake, env, call } = ios({ simulators: [{ udid: SIM, name: 'QA-iPhone17', state: 'Booted', live: { 'com.apple.apsd': true } }] });
+  const r = await call(['ios', 'up', 'QA-iPhone17', '--idle-down', '30m']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stderr, /auto-desligar ignorado/);
+  assert.equal(fake.spawnCalls.length, 1);
+  assert.match(r.stdout, /^auto-desligar: apos 30m sem app em uso/m);
+  assert.equal(entryOf(env, 'ios')!.idleDown!.ms, 30 * 60_000);
+  const down = await call(['ios', 'down', 'QA-iPhone17']);
+  assert.equal(down.code, 0, down.stderr);
+  assert.equal(fake.sims.get(SIM)!.state, 'Shutdown');
+  assert.deepEqual(loadSession(env), []);
 });
 
 test('down de topo com iOS: SIGTERM no watcher do simulador', async () => {

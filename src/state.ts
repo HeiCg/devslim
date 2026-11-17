@@ -86,13 +86,28 @@ export type AndroidState = {
   disabledPackages: string[];
   settings?: SavedSetting[];
   bakedAt?: string;
+  // O que o ultimo `up`/`bake` passou ao emulador (-memory e -lowram). Pode
+  // diferir do perfil (`up --ram X` sem tune); e o "pedido" que se compara com a
+  // RAM efetiva do hardware-qemu.ini. Ausente em state antigo.
+  lastLaunch?: AndroidLaunchRecord;
 };
+
+export type AndroidLaunchRecord = { ramMb: number; lowRam: boolean; at: string };
 
 // Grava o state do tune. Se ja existe state para o AVD, o original salvo e o
 // do primeiro tune e nunca e sobrescrito (re-tune mantem o primeiro backup).
+// `dropLastLaunch`: o tune reescreve o config.ini e apaga o hardware-qemu.ini
+// daquele lancamento, entao o lastLaunch deixa de valer; sem isso ele fica.
 export function recordAndroidTune(
   avd: string,
-  input: { avdDir: string; originalConfigIni: string; originalConfigSha256: string; profile: AndroidProfile; now?: Date },
+  input: {
+    avdDir: string;
+    originalConfigIni: string;
+    originalConfigSha256: string;
+    profile: AndroidProfile;
+    now?: Date;
+    dropLastLaunch?: boolean;
+  },
   opts: StateOptions = {},
 ): { state: AndroidState; preservedOriginal: boolean; path: string } {
   const now = (input.now ?? new Date()).toISOString();
@@ -112,8 +127,31 @@ export function recordAndroidTune(
   };
   if (prev?.settings !== undefined) state.settings = prev.settings;
   if (prev?.bakedAt !== undefined) state.bakedAt = prev.bakedAt;
+  if (prev?.lastLaunch !== undefined && input.dropLastLaunch !== true) state.lastLaunch = prev.lastLaunch;
   const path = saveState('android', avd, state, opts);
   return { state, preservedOriginal, path };
+}
+
+// Registra o lancamento (up/bake) no state do AVD. Sem state (AVD nunca
+// tunado) nada e criado: devolve null e quem compara cai no config.ini.
+export function recordAndroidLaunch(avd: string, launch: AndroidLaunchRecord, opts: StateOptions = {}): string | null {
+  const prev = loadState<AndroidState>('android', avd, opts);
+  if (prev === null) return null;
+  return saveState('android', avd, { ...prev, lastLaunch: { ramMb: launch.ramMb, lowRam: launch.lowRam, at: launch.at } }, opts);
+}
+
+// RAM "pedida" para comparar com a efetiva: a do ultimo up/bake quando o state
+// tem lastLaunch; senao a do perfil do tune; null sem nenhuma das duas.
+export function requestedRamMb(st: Pick<AndroidState, 'profile' | 'lastLaunch'> | null | undefined): number | null {
+  const launched = st?.lastLaunch?.ramMb;
+  if (typeof launched === 'number' && Number.isFinite(launched)) return launched;
+  const profile = st?.profile?.ramMb;
+  return typeof profile === 'number' && Number.isFinite(profile) ? profile : null;
+}
+
+export function launchedRamMb(st: Pick<AndroidState, 'lastLaunch'> | null | undefined): number | null {
+  const launched = st?.lastLaunch?.ramMb;
+  return typeof launched === 'number' && Number.isFinite(launched) ? launched : null;
 }
 
 // State de um simulador iOS enxugado. `backup` tem o valor que cada label

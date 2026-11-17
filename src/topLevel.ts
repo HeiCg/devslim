@@ -1,14 +1,14 @@
 import { DevslimError } from './errors.ts';
 import { resolveRuntime, type Runtime } from './android/deps.ts';
 import { downAvd, type DownOutcome } from './android/runtime.ts';
-import { loadSession, removeSession } from './android/session.ts';
+import { loadSession, removeSession, type SessionEntry } from './android/session.ts';
 import { downSim, type DownSimOutcome, type IosContext } from './ios/slim.ts';
 import { measureAvd, measureSim, type AndroidMeasurement, type IosMeasurement } from './measure.ts';
 import { listStates } from './state.ts';
 import { stopIdleWatcher } from './idle.ts';
 import { avdLiveness, listSimDevices, sessionStatus, type SessionStatus } from './status.ts';
 
-// Comandos de topo: `devslim down` e `devslim measure` cobrem Android e iOS.
+// Comandos de topo: `devslim down`, `devslim prune` e `devslim measure` cobrem Android e iOS.
 
 // result 'skipped': com --force e nada vivo na sessao daquela plataforma, a
 // ferramenta dela faltou (sem SDK Android, sem Xcode); name e id vazios, o
@@ -33,6 +33,11 @@ const failedFor = (s: SessionStatus, err: unknown): TopDownOutcome =>
 
 const skippedFor = (platform: 'android' | 'ios', err: unknown): TopDownOutcome =>
   Object.freeze({ platform, name: '', id: '', registered: false, result: 'skipped', detail: (err as Error).message });
+
+// Por que uma entrada da sessao e morta (mesma deteccao do STALE do status).
+export function staleDetail(platform: 'android' | 'ios'): string {
+  return platform === 'android' ? 'sem lock nem qemu rodando' : 'simulador desligado ou inexistente';
+}
 
 function skipped(rt: Runtime, platform: 'android' | 'ios', err: unknown): TopDownOutcome {
   const o = skippedFor(platform, err);
@@ -62,7 +67,7 @@ export async function downAll(ctx: IosContext & { force?: boolean } = {}): Promi
       id: s.id,
       registered: true,
       result: 'stale',
-      detail: s.platform === 'android' ? 'sem lock nem qemu rodando' : 'simulador desligado ou inexistente',
+      detail: staleDetail(s.platform),
     }));
   }
 
@@ -90,6 +95,45 @@ export async function downAll(ctx: IosContext & { force?: boolean } = {}): Promi
     }
   }
   return out;
+}
+
+export type PruneOutcome = Readonly<{
+  platform: 'android' | 'ios';
+  name: string;
+  id: string; // serial ou UDID
+  startedAt: string;
+  detail: string;
+  // Registro do auto-desligar que saiu junto com a entrada; o watcher nao
+  // recebe sinal (sai sozinho ao ver o device parado ou a entrada sumida).
+  idleDown: Readonly<{ ms: number; watcherPid: number }> | null;
+}>;
+
+// `devslim prune`: tira da sessao as entradas cujo device ja nao roda (a mesma
+// deteccao do STALE do status), com o registro do auto-desligar delas. Nunca
+// desliga device, nunca sinaliza processo, nunca apaga state. So remove a
+// entrada exata que foi julgada morta (mesmo pid e startedAt): um `up` que
+// registrou de novo no meio do caminho fica.
+export async function pruneSession(ctx: IosContext = {}): Promise<PruneOutcome[]> {
+  const rt = resolveRuntime(ctx);
+  const entries = loadSession(rt.env);
+  if (entries.length === 0) return [];
+  const devices = entries.some((e) => e.platform === 'ios') ? await listSimDevices(rt) : [];
+  const st = await sessionStatus(entries, { exec: rt.exec, env: rt.env, devices, pidAlive: rt.pidAlive });
+  const dead = entries.filter((_, i) => st[i].stale);
+  if (dead.length === 0) return [];
+  const same = (a: SessionEntry, b: SessionEntry) =>
+    a.platform === b.platform && a.serial === b.serial && a.avd === b.avd && a.pid === b.pid && a.startedAt === b.startedAt;
+  const removed = removeSession((e) => dead.some((d) => same(d, e)), rt.env);
+  return removed.map((e) =>
+    Object.freeze({
+      platform: e.platform,
+      name: e.avd,
+      id: e.serial,
+      startedAt: e.startedAt,
+      detail: staleDetail(e.platform),
+      idleDown: e.idleDown == null ? null : Object.freeze({ ms: e.idleDown.ms, watcherPid: e.idleDown.watcherPid }),
+    }),
+  );
 }
 
 export type AnyMeasurement = AndroidMeasurement | IosMeasurement;

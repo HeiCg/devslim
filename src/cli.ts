@@ -14,13 +14,14 @@ import { grpcPortFor, GRPC_REFERENCE_PORT } from './android/launchArgs.ts';
 import { bakeAvd, createAvd, downAvd, upAvd, type BakeResult } from './android/runtime.ts';
 import { planTune, restoreAvd, tuneAvd, type TunePlan } from './android/tune.ts';
 import { measureAvd, measureSim, type AndroidMeasurement, type IosMeasurement } from './measure.ts';
-import { loadState, type AndroidState } from './state.ts';
+import { loadState, requestedRamMb, type AndroidState } from './state.ts';
 import { ALWAYS_ENABLED, CAPABILITY_KEEPS, CATEGORIES, CATEGORY_BREAKS, CATEGORY_IDS, managedSet } from './ios/labels.ts';
 import { downSim, offSim, planSim, upSim, type IosContext, type IosSlimOptions, type SimPlan, type UpSimResult } from './ios/slim.ts';
 import { doctorExitCode, doctorText, runDoctor } from './doctor.ts';
 import { collectStatus, statusText } from './status.ts';
-import { downAll, measureAll } from './topLevel.ts';
-import { IDLE_MIN_MS, IDLE_WATCH_CMD, idleSkippedWarning, idleUpLine, parseIdleDuration, startIdleWatcher, type IdleWatcherInfo } from './idle.ts';
+import { downAll, measureAll, pruneSession, type PruneOutcome } from './topLevel.ts';
+import { forgetAvd, forgetSim, type ForgetResult } from './orphans.ts';
+import { IDLE_MIN_MS, IDLE_WATCH_CMD, IOS_ALREADY_SLIM_REASON, idleSkippedWarning, idleUpLine, parseIdleDuration, startIdleWatcher, type IdleWatcherInfo } from './idle.ts';
 import { runIdleWatch } from './idleWatch.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -38,8 +39,11 @@ export const HELP = `devslim ${pkg.version}: emulador Android e simulador iOS ec
 
 uso:
   devslim status [--json]                o que esta bootado, perfil aplicado, drift, sessao e swap (so leitura, sem adb)
-  devslim doctor [--json]                checagens de ambiente (Xcode, SDK, emulator, AVDs, argent, swap); exit 1 se houver fail
+  devslim doctor [--json]                checagens de ambiente (Xcode, SDK, emulator, AVDs, argent, swap, state orfao);
+                                         exit 1 se houver fail
   devslim down [--force] [--json]        desliga tudo que a sessao subiu (Android e iOS); remove entradas mortas sem matar
+  devslim prune [--json]                 tira da sessao entradas de device que ja nao roda (e o auto-desligar delas);
+                                         nao desliga nada nem apaga state: down desliga devices vivos, prune so limpa registros
   devslim measure [--json]               mede todo emulador e simulador rodando (array; vazio se nada roda)
 
   devslim android plan <avd> [flags]     mostra mudancas do config.ini e a linha do emulator (nao escreve)
@@ -58,6 +62,9 @@ uso:
   devslim android restore <avd> [--config-only]
                                          desfaz pacotes/settings no guest (AVD rodando) e devolve config.ini
   devslim android measure <avd> [--json] phys_footprint, cabecalho do footprint e RSS do qemu no host; memoria e processos no guest
+  devslim android forget <avd> [--force] [--json]
+                                         apaga o state (e a entrada da sessao) de AVD que nao existe mais; nunca toca o
+                                         device; AVD existente: use restore (--force apaga o registro mesmo assim)
 
   devslim ios plan <udid|nome> [flags ios]
                                          labels que o up desligaria e quantos ja estao no store (nao escreve)
@@ -68,6 +75,9 @@ uso:
                                          shutdown do que o devslim subiu (--force: qualquer simulador bootado)
   devslim ios measure <udid|nome> [--json]
                                          processos, phys_footprint e %cpu da arvore do launchd_sim
+  devslim ios forget <udid|nome> [--force] [--json]
+                                         apaga o state (e a entrada da sessao) de simulador que nao existe mais; nunca
+                                         toca o device; simulador existente: use ios off (--force apaga mesmo assim)
   devslim ios categories [--json]        categorias de labels, quantos labels e o que quebra
   devslim --help | --version
 
@@ -96,7 +106,7 @@ flags de plan/tune/up (herdam o perfil do tune; flags sobrepoem):
 
 outras flags:
   --force          up/bake/ios up: ignora a guarda de um device por vez e a recusa por swap acima de 95%;
-                   down: mata o que nao foi subido pelo devslim
+                   down: mata o que nao foi subido pelo devslim; forget: apaga o registro mesmo com o device existindo
   --idle-down D    android up/ios up: desliga o device depois de D sem app de terceiro em primeiro plano
                    (30m, 90s, 1h ou minutos; minimo 2m); um processo destacado confere a cada 30 s;
                    so vale para device que o devslim subiu; nao fica salvo no perfil
@@ -158,6 +168,19 @@ const BAKE_FLAGS: FlagSpec = Object.freeze({
 const DOWN_FLAGS: FlagSpec = Object.freeze({ force: 'bool', json: 'bool' });
 const MEASURE_FLAGS: FlagSpec = Object.freeze({ json: 'bool' });
 const CREATE_FLAGS: FlagSpec = Object.freeze({ image: 'value', api: 'value', device: 'value', json: 'bool' });
+const FORGET_FLAGS: FlagSpec = Object.freeze({ force: 'bool', json: 'bool' });
+
+// Saida do `android forget` / `ios forget`: o que saiu, e o aviso quando o
+// device ainda existe (--force) ou nao deu para conferir.
+function forgetText(r: ForgetResult): string[] {
+  const kind = r.platform === 'android' ? 'AVD' : 'simulador';
+  const what = r.platform === 'android' ? `AVD ${r.name}` : `simulador ${r.name} (${r.id})`;
+  const lines = [r.removedState ? `state removido: ${r.statePath}` : `state: nenhum (${r.statePath})`];
+  if (r.removedSession.length > 0) lines.push(`sessao: entrada ${r.removedSession.map((e) => e.serial).join(', ')} removida`);
+  if (r.deviceExists === true) lines.push(`${what} ainda existe; so os registros do devslim sairam (--force), o ${kind} nao foi tocado`);
+  else if (r.deviceExists === null) lines.push(`nao deu para conferir se o ${what} existe; so os registros do devslim sairam (--force)`);
+  return lines;
+}
 
 function parseFlags(args: readonly string[], spec: FlagSpec): Parsed {
   const out: Parsed = { positionals: [], values: {}, multi: {}, bools: new Set() };
@@ -288,11 +311,12 @@ function planText(plan: TunePlan, inherited = false): string[] {
 }
 
 // Nota de piso de RAM do plan/tune. Pedido do ultimo boot como no status: o
-// -memory do perfil salvo; sem state, o hw.ramSize do config.ini.
+// -memory do ultimo up/bake (lastLaunch), senao o do perfil salvo; sem state,
+// o hw.ramSize do config.ini.
 function ramNoteFor(avd: AvdInfo, profile: AndroidProfile, io: CliIo): string | null {
   let requested: number | null = null;
   try {
-    requested = loadState<AndroidState>('android', avd.name, { env: io.env })?.profile?.ramMb ?? null;
+    requested = requestedRamMb(loadState<AndroidState>('android', avd.name, { env: io.env }));
   } catch {
     requested = null; // state ilegivel: resolveProfile ja teria reclamado se precisasse dele
   }
@@ -482,6 +506,14 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     return res.some((r) => r.result === 'failed') ? 1 : 0;
   }
 
+  if (sub === 'forget') {
+    const p = parseFlags(rest, FORGET_FLAGS);
+    const res = forgetAvd(oneAvd(p, sub), { env: io.env, force: p.bools.has('force') });
+    if (p.bools.has('json')) json(res);
+    else out(forgetText(res));
+    return 0;
+  }
+
   if (sub === 'measure') {
     const p = parseFlags(rest, MEASURE_FLAGS);
     const avd = oneAvd(p, sub);
@@ -611,7 +643,10 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
     const query = oneSim(p, sub);
     const idleMs = idleDownFlag(p); // erro de uso antes de bootar
     const r = await upSim(query, iosOptions(p, io), { ...iosCtx(io), force: p.bools.has('force') });
-    const idle = idleMs === undefined ? undefined : await attachIdleDown('ios', r.udid, idleMs, `simulador ${r.name} (${r.udid})`, io);
+    const idle =
+      idleMs === undefined
+        ? undefined
+        : await attachIdleDown('ios', r.udid, idleMs, `simulador ${r.name} (${r.udid})`, io, r.alreadySlim ? IOS_ALREADY_SLIM_REASON : undefined);
     if (p.bools.has('json')) json(idle === undefined ? r : { ...r, idleDown: idle });
     else out(idle == null ? upSimText(r) : [...upSimText(r), idleUpLine(idle)]);
     return r.notApplied.length > 0 || r.notRestored.length > 0 ? EXIT_NOT_APPLIED : 0;
@@ -641,6 +676,14 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
     return res.some((r) => r.result === 'failed') ? 1 : 0;
   }
 
+  if (sub === 'forget') {
+    const p = parseFlags(rest, FORGET_FLAGS);
+    const res = await forgetSim(oneSim(p, sub), { ...iosCtx(io), force: p.bools.has('force') });
+    if (p.bools.has('json')) json(res);
+    else out(forgetText(res));
+    return 0;
+  }
+
   if (sub === 'measure') {
     const p = parseFlags(rest, JSON_ONLY);
     const m = await measureSim(oneSim(p, sub), iosCtx(io));
@@ -657,7 +700,12 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
 
 const TOP_DOWN_FLAGS: FlagSpec = Object.freeze({ force: 'bool', json: 'bool' });
 
-async function runTop(cmd: 'status' | 'doctor' | 'down' | 'measure', args: readonly string[], io: CliIo): Promise<number> {
+function pruneLine(r: PruneOutcome): string {
+  const idle = r.idleDown === null ? '' : `; registro do auto-desligar (watcher pid ${r.idleDown.watcherPid}) junto`;
+  return `removido da sessao: ${r.platform} ${r.name} ${r.id} (${r.detail})${idle}`;
+}
+
+async function runTop(cmd: 'status' | 'doctor' | 'down' | 'prune' | 'measure', args: readonly string[], io: CliIo): Promise<number> {
   const out = (lines: string[]) => io.stdout(lines.join('\n') + '\n');
   const json = (obj: unknown) => io.stdout(JSON.stringify(obj, null, 2) + '\n');
   const p = parseFlags(args, cmd === 'down' ? TOP_DOWN_FLAGS : JSON_ONLY);
@@ -675,6 +723,12 @@ async function runTop(cmd: 'status' | 'doctor' | 'down' | 'measure', args: reado
     if (asJson) json(checks);
     else out(doctorText(checks));
     return doctorExitCode(checks);
+  }
+  if (cmd === 'prune') {
+    const res = await pruneSession(iosCtx(io));
+    if (asJson) json({ removed: res });
+    else out(res.length === 0 ? ['nada a limpar'] : res.map(pruneLine));
+    return 0;
   }
   if (cmd === 'down') {
     const res = await downAll({ ...iosCtx(io), force: p.bools.has('force') });
@@ -702,9 +756,16 @@ function idleDownFlag(p: Parsed): number | undefined {
 }
 
 // Sobe o watcher para o device da sessao; fora da sessao = aviso e null.
-async function attachIdleDown(platform: 'android' | 'ios', id: string, ms: number, what: string, io: CliIo): Promise<IdleWatcherInfo | null> {
+async function attachIdleDown(
+  platform: 'android' | 'ios',
+  id: string,
+  ms: number,
+  what: string,
+  io: CliIo,
+  why?: string,
+): Promise<IdleWatcherInfo | null> {
   const info = await startIdleWatcher(platform, id, ms, resolveRuntime(rtx(io)));
-  if (info === null) io.stderr(idleSkippedWarning(what));
+  if (info === null) io.stderr(idleSkippedWarning(what, why));
   return info;
 }
 
@@ -784,7 +845,7 @@ export async function main(argv: readonly string[], io: CliIo = defaultIo()): Pr
       io.stdout(`${pkg.version}\n`);
       return 0;
     }
-    if (cmd === 'status' || cmd === 'doctor' || cmd === 'down' || cmd === 'measure') return await runTop(cmd, rest, io);
+    if (cmd === 'status' || cmd === 'doctor' || cmd === 'down' || cmd === 'prune' || cmd === 'measure') return await runTop(cmd, rest, io);
     if (cmd === 'android') return await runAndroid(rest, io);
     if (cmd === 'ios') return await runIos(rest, io);
     if (cmd === IDLE_WATCH_CMD) return await runIdleWatchCmd(rest, io);

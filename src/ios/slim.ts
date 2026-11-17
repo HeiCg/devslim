@@ -322,8 +322,12 @@ export async function upSim(query: string, opts: IosSlimOptions = {}, ctx: IosCo
 
   const t0 = rt.now();
   await simctl.boot(udid);
-  if (!wasBooted) {
-    // Registra logo apos o boot: se o bootstatus falhar, `ios down` ainda acha.
+  // Este up bootou (do zero ou reboot para aplicar o perfil): o device e do
+  // devslim, entao `ios down` e `--idle-down` valem. Registra logo apos o boot:
+  // se o bootstatus falhar, `ios down` ainda acha. Reboot de device que ja
+  // estava na sessao mantem a entrada (e o registro do watcher dela).
+  const inSession = wasBooted && loadSession(rt.env).some((e) => e.platform === 'ios' && e.serial.toUpperCase() === udid.toUpperCase());
+  if (!inSession) {
     recordSession({ platform: 'ios', avd: device.name, serial: udid, pid: 0, port: 0, startedAt: rt.date().toISOString() }, rt.env);
   }
   await simctl.bootstatus(udid);
@@ -462,7 +466,7 @@ export type DownSimOutcome = Readonly<{
   detail?: string;
 }>;
 
-// Desliga o que a sessao subiu (`ios up` de device desligado). Com nome/UDID
+// Desliga o que a sessao subiu (`ios up` que bootou ou rebootou o device). Com nome/UDID
 // fora da sessao exige --force; sem argumento e com --force, desliga tambem
 // todo simulador bootado.
 export async function downSim(query: string | undefined, ctx: IosContext & { force?: boolean } = {}): Promise<DownSimOutcome[]> {

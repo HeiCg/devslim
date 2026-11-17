@@ -328,6 +328,22 @@ test('plan/tune: nota usa a RAM efetiva do ultimo boot (hardware-qemu.ini) quand
   assert.match(run(['android', 'plan', 'fake-api35']).stdout, /^nota: .*pisos observados/m);
 });
 
+test('plan: nota compara a efetiva com o -memory do ultimo up (lastLaunch), nao com o perfil', () => {
+  assert.equal(run(['android', 'tune', 'fake-api35']).code, 0); // perfil 2048
+  const statePath = join(devslimHome, 'state', 'android', 'fake-api35.json');
+  const st = JSON.parse(readFileSync(statePath, 'utf8'));
+  // up --ram 4096 sem tune: efetiva 4096 nao e elevacao; a nota volta a ser a generica.
+  writeFileSync(statePath, JSON.stringify({ ...st, lastLaunch: { ramMb: 4096, lowRam: false, at: '2026-11-17T09:00:00.000Z' } }));
+  writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 4096\n');
+  const p = run(['android', 'plan', 'fake-api35']);
+  assert.match(p.stdout, /^nota: o emulador deve elevar a RAM pedida de 2048 MB \(pisos observados/m);
+  assert.doesNotMatch(p.stdout, /no ultimo boot deste AVD/);
+  // ultimo up pediu 2048 e virou 2560: nota cita a elevacao real.
+  writeFileSync(statePath, JSON.stringify({ ...st, lastLaunch: { ramMb: 2048, lowRam: false, at: '2026-11-17T09:00:00.000Z' } }));
+  writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 2560\n');
+  assert.match(run(['android', 'plan', 'fake-api35']).stdout, /^nota: no ultimo boot deste AVD o emulador elevou 2048 MB para 2560 MB/m);
+});
+
 test('help lista --lowram e --no-lowram', () => {
   const h = run(['--help']).stdout;
   assert.match(h, /^ {2}--lowram {5,}/m);

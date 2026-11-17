@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
-import { loadSession } from '../src/android/session.ts';
+import { loadSession, recordSession } from '../src/android/session.ts';
 import { DevslimError } from '../src/errors.ts';
 import type { Exec } from '../src/exec.ts';
 import { parseStorePlist, readStore, serializeStorePlist, storePath } from '../src/ios/disabledStore.ts';
@@ -157,6 +157,27 @@ test('bootado e divergente: shutdown ANTES de escrever o store; alvo bootado nao
   assert.ok(cmds.indexOf(`shutdown ${UDID}`) < cmds.indexOf(`boot ${UDID}`));
   assert.equal(fake.sims.get(UDID)!.state, 'Booted');
   assert.deepEqual(r.notApplied, []);
+});
+
+test('bootado e divergente: o reboot e do devslim, entao entra na sessao; ios down sem --force desliga', async () => {
+  const { ctx, fake } = world({ simulators: [{ udid: UDID, name: 'QA-iPhone17', state: 'Booted', live: { 'com.apple.apsd': true } }] });
+  const r = await upSim(UDID, {}, ctx);
+  assert.equal(r.wasBooted, true);
+  assert.equal(r.shutdownFirst, true);
+  assert.deepEqual(loadSession(ctx.env).map((e) => [e.platform, e.serial, e.avd, e.startedAt]), [['ios', UDID, 'QA-iPhone17', '2026-11-16T12:00:00.000Z']]);
+  const down = await downSim(undefined, ctx);
+  assert.deepEqual(down.map((d) => [d.udid, d.result]), [[UDID, 'shutdown']]);
+  assert.equal(fake.sims.get(UDID)!.state, 'Shutdown');
+  assert.deepEqual(loadSession(ctx.env), []);
+});
+
+test('bootado e divergente ja na sessao: reboot mantem a entrada existente (e o registro do watcher)', async () => {
+  const { ctx } = world({ simulators: [{ udid: UDID, name: 'QA-iPhone17', state: 'Booted', live: { 'com.apple.apsd': true } }] });
+  const idleDown = { ms: 120_000, watcherPid: 777, startedAt: 'w' };
+  recordSession({ platform: 'ios', avd: 'QA-iPhone17', serial: UDID, pid: 0, port: 0, startedAt: 'antes', idleDown }, ctx.env);
+  const r = await upSim(UDID, {}, ctx);
+  assert.equal(r.shutdownFirst, true);
+  assert.deepEqual(loadSession(ctx.env), [{ platform: 'ios', avd: 'QA-iPhone17', serial: UDID, pid: 0, port: 0, startedAt: 'antes', idleDown }]);
 });
 
 test('guarda: outro simulador bootado ou emulador recusa; --force passa; aviso de swap', async () => {

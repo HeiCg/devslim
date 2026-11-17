@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { DevslimError } from '../errors.ts';
-import { devslimHome, loadState, recordAndroidGuest, type AndroidState } from '../state.ts';
+import { devslimHome, loadState, recordAndroidGuest, recordAndroidLaunch, type AndroidState } from '../state.ts';
 import { portForSerial, serialForPort, type Adb, type AdbDevice } from './adb.ts';
 import { avdHome, findAvd, listAvds, runningLocks, type AvdInfo } from './avd.ts';
 import { resolveRuntime, type Runtime, type RuntimeContext } from './deps.ts';
@@ -106,6 +106,13 @@ async function launch(
   const serial = serialForPort(port);
   // Registra antes do boot: se o boot falhar, `down` ainda acha o processo.
   recordSession({ platform: 'android', avd: avd.name, serial, pid, port, startedAt: rt.date().toISOString() }, rt.env);
+  // O -memory deste lancamento e o "pedido" que status/doctor/plan comparam
+  // com a RAM efetiva (pode nao ser a do perfil: `up --ram X` sem tune).
+  try {
+    recordAndroidLaunch(avd.name, { ramMb: profile.ramMb, lowRam: profile.lowRam, at: rt.date().toISOString() }, { env: rt.env });
+  } catch (err) {
+    rt.stderr(`devslim: aviso: lastLaunch nao gravado no state de ${avd.name}: ${(err as Error).message}\n`);
+  }
   try {
     await adb.waitForBoot(serial, { timeoutMs: rt.bootTimeoutMs, pollMs: rt.pollMs });
   } catch (err) {

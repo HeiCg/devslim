@@ -102,6 +102,7 @@ export function tuneAvd(avdName: string, profile: AndroidProfile, ctx: TuneConte
       originalConfigSha256: sha256(plan.configBefore),
       profile,
       now: ctx.now,
+      dropLastLaunch: plan.changes.length > 0,
     },
     { env: ctx.env },
   );
