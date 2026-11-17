@@ -4,7 +4,8 @@ import { resolveRuntime, type Runtime } from './android/deps.ts';
 import { readEffectiveHardware } from './android/hardwareQemu.ts';
 import { launcherFor, launcherText, listQemuProcesses, type Launcher } from './android/launcher.ts';
 import { hasSlimSnapshot } from './android/runtime.ts';
-import { findRunningEntry, isAdvertised, scanRunning, type RunningEntry } from './android/runningIni.ts';
+import { findRunningEntry, isAdvertised, nodePidAlive, scanRunning, type PidAlive, type RunningEntry } from './android/runningIni.ts';
+import { formatDuration } from './idle.ts';
 import { loadSession, type SessionEntry } from './android/session.ts';
 import { readStore } from './ios/disabledStore.ts';
 import { labelsToDisable } from './ios/labels.ts';
@@ -55,14 +56,18 @@ export type SessionStatus = Readonly<{
   startedAt: string;
   alive: boolean;
   stale: boolean;
+  // Auto-desligar (`up --idle-down`): ms parado ate desligar, pid do watcher e
+  // se ele ainda vive (pidAlive). null = sem auto-desligar.
+  idleDown: Readonly<{ ms: number; watcherPid: number; watcherAlive: boolean }> | null;
 }>;
 
 // Entrada morta: Android sem lock nem qemu; iOS com o device desligado ou
 // inexistente. Sem lista do simctl (null) nao da para afirmar: conta como viva.
 export async function sessionStatus(
   entries: readonly SessionEntry[],
-  opts: { exec: Exec; env: Runtime['env']; devices: readonly SimDevice[] | null },
+  opts: { exec: Exec; env: Runtime['env']; devices: readonly SimDevice[] | null; pidAlive?: PidAlive },
 ): Promise<SessionStatus[]> {
+  const pidAlive = opts.pidAlive ?? nodePidAlive;
   const out: SessionStatus[] = [];
   for (const e of entries) {
     let alive: boolean;
@@ -74,7 +79,9 @@ export async function sessionStatus(
       const dev = opts.devices.find((d) => d.udid.toUpperCase() === e.serial.toUpperCase());
       alive = dev !== undefined && dev.state !== 'Shutdown';
     }
-    out.push(Object.freeze({ platform: e.platform, name: e.avd, id: e.serial, pid: e.pid, startedAt: e.startedAt, alive, stale: !alive }));
+    const w = e.idleDown;
+    const idleDown = w == null ? null : Object.freeze({ ms: w.ms, watcherPid: w.watcherPid, watcherAlive: pidAlive(w.watcherPid) });
+    out.push(Object.freeze({ platform: e.platform, name: e.avd, id: e.serial, pid: e.pid, startedAt: e.startedAt, alive, stale: !alive, idleDown }));
   }
   return out;
 }
@@ -245,7 +252,7 @@ export async function collectStatus(ctx: IosContext = {}): Promise<StatusReport>
   const ios = await iosStatus(rt, ctx, devices);
   const entries = loadSession(rt.env);
   const android = await androidStatus(rt, entries);
-  const session = await sessionStatus(entries, { exec: rt.exec, env: rt.env, devices });
+  const session = await sessionStatus(entries, { exec: rt.exec, env: rt.env, devices, pidAlive: rt.pidAlive });
   const swap = await readSwap(rt.exec);
   return Object.freeze({
     ios: Object.freeze(ios),
@@ -309,7 +316,9 @@ export function statusText(s: StatusReport): string[] {
     lines.push(`android ${a.avd}: ${parts.join(', ')}`);
   }
   for (const e of s.session) {
-    lines.push(`sessao ${e.platform} ${e.name} ${e.id}: ${e.stale ? 'STALE (devslim down limpa)' : 'viva'}`);
+    const w = e.idleDown;
+    const idle = w === null ? '' : `, auto-desligar em ${formatDuration(w.ms)} sem app em uso (watcher pid ${w.watcherPid} ${w.watcherAlive ? 'vivo' : 'MORTO'})`;
+    lines.push(`sessao ${e.platform} ${e.name} ${e.id}: ${e.stale ? 'STALE (devslim down limpa)' : 'viva'}${idle}`);
   }
   if (s.ios.length === 0) lines.push('ios: nada bootado e nenhum state');
   if (s.android.length === 0) lines.push('android: nenhum AVD com state nem emulador rodando');

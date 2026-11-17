@@ -27,6 +27,7 @@ import { fileSize, isSoftwareGpu, ramIncreaseLineFromLog, readEffectiveHardware 
 import { launcherFor, launcherText, type Launcher } from './launcher.ts';
 import { findQemuPid } from '../measure.ts';
 import { findRunningEntry, isAdvertised, scanRunning } from './runningIni.ts';
+import { stopIdleWatcher } from '../idle.ts';
 
 const NAME_RE = /^[A-Za-z0-9._-]+$/;
 
@@ -407,12 +408,12 @@ export async function downAvd(avdName: string | undefined, opts: RuntimeContext 
   const adb = rt.adb();
   const session = loadSession(rt.env).filter((e) => e.platform === 'android');
 
-  type Target = { avd: string; serial: string; registered: boolean };
+  type Target = { avd: string; serial: string; registered: boolean; entry?: SessionEntry };
   const targets: Target[] = [];
   if (avdName !== undefined) {
     if (!NAME_RE.test(avdName)) throw new DevslimError(`nome de AVD invalido: ${avdName}`);
     const entry = session.find((e) => e.avd === avdName);
-    if (entry !== undefined) targets.push({ avd: entry.avd, serial: entry.serial, registered: true });
+    if (entry !== undefined) targets.push({ avd: entry.avd, serial: entry.serial, registered: true, entry });
     else if (!force) {
       throw new DevslimError(`AVD ${avdName} nao foi subido pelo devslim (nada na sessao); --force para desligar mesmo assim`);
     } else {
@@ -421,7 +422,7 @@ export async function downAvd(avdName: string | undefined, opts: RuntimeContext 
       targets.push({ avd: avdName, serial, registered: false });
     }
   } else {
-    for (const e of session) targets.push({ avd: e.avd, serial: e.serial, registered: true });
+    for (const e of session) targets.push({ avd: e.avd, serial: e.serial, registered: true, entry: e });
     if (force) {
       for (const dev of await runningEmulators(adb)) {
         if (targets.some((t) => t.serial === dev.serial)) continue;
@@ -431,8 +432,10 @@ export async function downAvd(avdName: string | undefined, opts: RuntimeContext 
   }
 
   const out: DownOutcome[] = [];
-  for (const t of targets) {
+  for (const { entry, ...t } of targets) {
     const drop = () => removeSession((e: SessionEntry) => e.platform === 'android' && e.serial === t.serial, rt.env);
+    // Auto-desligar: o watcher sai antes do device (e o campo da sessao junto).
+    if (entry !== undefined) await stopIdleWatcher(entry, rt);
     const present = (await adb.listDevices()).some((d) => d.serial === t.serial);
     if (!present) {
       drop();

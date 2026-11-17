@@ -4,7 +4,7 @@ import pkg from '../package.json' with { type: 'json' };
 import { resolveCapabilities } from './capabilities.ts';
 import { bytesToMb, sizeText } from './dirSize.ts';
 import { DevslimError, UsageError } from './errors.ts';
-import type { RuntimeContext } from './android/deps.ts';
+import { resolveRuntime, type RuntimeContext } from './android/deps.ts';
 import { findAvd, type AvdInfo } from './android/avd.ts';
 import { getValue, parseIni } from './android/configIni.ts';
 import { lastBootRaise, parseRamMb, ramFloorNote } from './android/hardwareQemu.ts';
@@ -20,6 +20,8 @@ import { downSim, offSim, planSim, upSim, type IosContext, type IosSlimOptions, 
 import { doctorExitCode, doctorText, runDoctor } from './doctor.ts';
 import { collectStatus, statusText } from './status.ts';
 import { downAll, measureAll } from './topLevel.ts';
+import { IDLE_MIN_MS, IDLE_WATCH_CMD, idleSkippedWarning, idleUpLine, parseIdleDuration, startIdleWatcher, type IdleWatcherInfo } from './idle.ts';
+import { runIdleWatch } from './idleWatch.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -45,7 +47,7 @@ uso:
   devslim android create <nome> [--image I] [--api N] [--device D]
                                          cria AVD (avdmanager) e aplica tune com tela 720x1600@320; nao boota;
                                          a system image tem que estar instalada (senao mostra o sdkmanager)
-  devslim android up <avd> [flags] [--force]
+  devslim android up <avd> [flags] [--force] [--idle-down D]
                                          boota do snapshot slim_base (se houver) com flags economicas; avisa se o
                                          emulador elevou a RAM pedida, se o AVD ja roda fora do perfil (argent,
                                          GPU por software) e sugere bake quando nao ha slim_base
@@ -59,7 +61,7 @@ uso:
 
   devslim ios plan <udid|nome> [flags ios]
                                          labels que o up desligaria e quantos ja estao no store (nao escreve)
-  devslim ios up <udid|nome> [flags ios] [--force]
+  devslim ios up <udid|nome> [flags ios] [--force] [--idle-down D]
                                          desliga labels launchd no disabled.plist do device e boota; exit 3 se algum nao pegou
   devslim ios off <udid|nome> [--json]   devolve cada label ao valor salvo e limpa o state (reboota se estava bootado)
   devslim ios down [<udid|nome>] [--force] [--json]
@@ -95,6 +97,9 @@ flags de plan/tune/up (herdam o perfil do tune; flags sobrepoem):
 outras flags:
   --force          up/bake/ios up: ignora a guarda de um device por vez e a recusa por swap acima de 95%;
                    down: mata o que nao foi subido pelo devslim
+  --idle-down D    android up/ios up: desliga o device depois de D sem app de terceiro em primeiro plano
+                   (30m, 90s, 1h ou minutos; minimo 2m); um processo destacado confere a cada 30 s;
+                   so vale para device que o devslim subiu; nao fica salvo no perfil
   --aggressive     bake: desliga tambem a lista aggressive (Play Store, assistentes de setup, Gboard)
   --config-only    restore: so o config.ini; pacotes/settings do guest ficam pendentes no state
   --image I        create: atalho google_apis, google_atd, aosp_atd, default (vira
@@ -138,7 +143,7 @@ const PROFILE_FLAGS: FlagSpec = Object.freeze({
 });
 const TUNE_FLAGS: FlagSpec = Object.freeze({ ...PROFILE_FLAGS, reset: 'bool' });
 const RESTORE_FLAGS: FlagSpec = Object.freeze({ json: 'bool', 'config-only': 'bool' });
-const UP_FLAGS: FlagSpec = Object.freeze({ ...PROFILE_FLAGS, force: 'bool' });
+const UP_FLAGS: FlagSpec = Object.freeze({ ...PROFILE_FLAGS, force: 'bool', 'idle-down': 'value' });
 const BAKE_FLAGS: FlagSpec = Object.freeze({
   aggressive: 'bool',
   need: 'multi',
@@ -423,21 +428,25 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
   if (sub === 'up') {
     const p = parseFlags(rest, UP_FLAGS);
     const avd = oneAvd(p, sub);
+    const idleMs = idleDownFlag(p); // erro de uso antes de bootar
     const res = await upAvd(avd, resolveProfile(p, io, avd).profile, { ...rtx(io), force: p.bools.has('force') });
+    const idle = idleMs === undefined ? undefined : await attachIdleDown('android', res.avd, idleMs, `AVD ${res.avd}`, io);
     if (p.bools.has('json')) {
-      json(res);
+      json(idle === undefined ? res : { ...res, idleDown: idle });
       return 0;
     }
+    const lines: string[] = [];
     if (res.alreadyRunning) {
-      out([`AVD ${res.avd} ja estava rodando em ${res.serial} (pid ${res.pid ?? '?'}); nada subido`]);
-      return 0;
+      lines.push(`AVD ${res.avd} ja estava rodando em ${res.serial} (pid ${res.pid ?? '?'}); nada subido`);
+    } else {
+      lines.push(
+        `AVD ${res.avd} pronto em ${res.serial} (pid ${res.pid}, ${res.fromSnapshot ? 'snapshot slim_base' : 'cold boot sem snapshot'}, boot ${secs(res.bootMs ?? 0)})`,
+        `comando: emulator ${res.emulatorArgs.join(' ')}`,
+        `log: ${res.logFile}`,
+      );
+      if (res.hint !== undefined) lines.push(res.hint);
     }
-    const lines = [
-      `AVD ${res.avd} pronto em ${res.serial} (pid ${res.pid}, ${res.fromSnapshot ? 'snapshot slim_base' : 'cold boot sem snapshot'}, boot ${secs(res.bootMs ?? 0)})`,
-      `comando: emulator ${res.emulatorArgs.join(' ')}`,
-      `log: ${res.logFile}`,
-    ];
-    if (res.hint !== undefined) lines.push(res.hint);
+    if (idle != null) lines.push(idleUpLine(idle));
     out(lines);
     return 0;
   }
@@ -492,7 +501,7 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
 // ios
 
 const IOS_PROFILE_FLAGS: FlagSpec = Object.freeze({ need: 'multi', for: 'value', except: 'multi', keep: 'multi', json: 'bool' });
-const IOS_UP_FLAGS: FlagSpec = Object.freeze({ ...IOS_PROFILE_FLAGS, force: 'bool' });
+const IOS_UP_FLAGS: FlagSpec = Object.freeze({ ...IOS_PROFILE_FLAGS, force: 'bool', 'idle-down': 'value' });
 const JSON_ONLY: FlagSpec = Object.freeze({ json: 'bool' });
 
 // Exit code do `ios up`/`ios off` quando algum label nao ficou no valor pedido.
@@ -599,9 +608,12 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
 
   if (sub === 'up') {
     const p = parseFlags(rest, IOS_UP_FLAGS);
-    const r = await upSim(oneSim(p, sub), iosOptions(p, io), { ...iosCtx(io), force: p.bools.has('force') });
-    if (p.bools.has('json')) json(r);
-    else out(upSimText(r));
+    const query = oneSim(p, sub);
+    const idleMs = idleDownFlag(p); // erro de uso antes de bootar
+    const r = await upSim(query, iosOptions(p, io), { ...iosCtx(io), force: p.bools.has('force') });
+    const idle = idleMs === undefined ? undefined : await attachIdleDown('ios', r.udid, idleMs, `simulador ${r.name} (${r.udid})`, io);
+    if (p.bools.has('json')) json(idle === undefined ? r : { ...r, idleDown: idle });
+    else out(idle == null ? upSimText(r) : [...upSimText(r), idleUpLine(idle)]);
     return r.notApplied.length > 0 || r.notRestored.length > 0 ? EXIT_NOT_APPLIED : 0;
   }
 
@@ -681,6 +693,35 @@ async function runTop(cmd: 'status' | 'doctor' | 'down' | 'measure', args: reado
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// auto-desligar
+
+function idleDownFlag(p: Parsed): number | undefined {
+  const v = p.values['idle-down'];
+  return v === undefined ? undefined : parseIdleDuration(v);
+}
+
+// Sobe o watcher para o device da sessao; fora da sessao = aviso e null.
+async function attachIdleDown(platform: 'android' | 'ios', id: string, ms: number, what: string, io: CliIo): Promise<IdleWatcherInfo | null> {
+  const info = await startIdleWatcher(platform, id, ms, resolveRuntime(rtx(io)));
+  if (info === null) io.stderr(idleSkippedWarning(what));
+  return info;
+}
+
+const IDLE_WATCH_FLAGS: FlagSpec = Object.freeze({ 'idle-ms': 'value' });
+
+// Subcomando interno (fora do --help): o processo destacado do auto-desligar.
+async function runIdleWatchCmd(args: readonly string[], io: CliIo): Promise<number> {
+  const p = parseFlags(args, IDLE_WATCH_FLAGS);
+  const [platform, id, extra] = p.positionals;
+  if (platform !== 'android' && platform !== 'ios') throw new UsageError(`${IDLE_WATCH_CMD}: plataforma invalida: ${platform ?? '(ausente)'}`);
+  if (id === undefined || extra !== undefined) throw new UsageError(`${IDLE_WATCH_CMD}: uso: ${IDLE_WATCH_CMD} <android|ios> <id> --idle-ms <n>`);
+  const ms = intFlag('idle-ms', p.values['idle-ms']);
+  if (ms === undefined || ms < IDLE_MIN_MS) throw new UsageError(`${IDLE_WATCH_CMD}: --idle-ms exige inteiro >= ${IDLE_MIN_MS}`);
+  const res = await runIdleWatch(platform, id, ms, { ...rtx(io), log: io.stdout });
+  return res.reason === 'probe-failed' || res.reason === 'shutdown-failed' ? 1 : 0;
+}
+
 function rtx(io: CliIo): RuntimeContext {
   return { ...io.runtime, env: io.env, stderr: io.stderr };
 }
@@ -746,6 +787,7 @@ export async function main(argv: readonly string[], io: CliIo = defaultIo()): Pr
     if (cmd === 'status' || cmd === 'doctor' || cmd === 'down' || cmd === 'measure') return await runTop(cmd, rest, io);
     if (cmd === 'android') return await runAndroid(rest, io);
     if (cmd === 'ios') return await runIos(rest, io);
+    if (cmd === IDLE_WATCH_CMD) return await runIdleWatchCmd(rest, io);
     throw new UsageError(cmd === undefined ? 'falta o comando' : `comando desconhecido: ${cmd}`);
   } catch (err) {
     if (err instanceof DevslimError) {

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createFakeExec, type ExecResult, type FakeCall, type FakeSpawnCall, type SpawnDetached } from '../exec.ts';
+import { createFakeExec, type ExecResult, type FakeCall, type FakeSpawnCall, type SignalPid, type SpawnDetached } from '../exec.ts';
 
 // Mundo Android falso para testes: um SDK ficticio, emuladores em memoria,
 // relogio e sleep falsos. Nenhum processo real e criado. Responde a adb,
@@ -20,7 +20,12 @@ export type FakeEmulatorInit = {
   failSettings?: readonly string[]; // 'ns/key' cujo put/delete falha
   dexoptFails?: boolean;
   pid?: number;
+  // Saida de `dumpsys activity activities` (padrao: launcher em primeiro plano).
+  activities?: string;
 };
+
+export const FAKE_LAUNCHER_ACTIVITIES =
+  '  topResumedActivity=ActivityRecord{e8b3c4 u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity t5}\n';
 
 export type FakeEmulator = {
   avd: string;
@@ -38,6 +43,7 @@ export type FakeEmulator = {
   failSettings: Set<string>;
   dexoptFails: boolean;
   snapshots: string[];
+  activities: string;
 };
 
 export type FakeAndroidOptions = {
@@ -74,6 +80,9 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
   const clock = { t: 0 };
   const sleeps: number[] = [];
   const emulators = new Map<string, FakeEmulator>();
+  // Watchers "vivos" (pid -> linha de comando) e sinais recebidos.
+  const watchers = new Map<number, string>();
+  const signals: { pid: number; signal: string }[] = [];
   let nextPid = 50000;
 
   function addEmulator(init: FakeEmulatorInit): FakeEmulator {
@@ -94,6 +103,7 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
       failSettings: new Set(init.failSettings ?? []),
       dexoptFails: init.dexoptFails === true,
       snapshots: [],
+      activities: init.activities ?? FAKE_LAUNCHER_ACTIVITIES,
     };
     emulators.set(serial, emu);
     return emu;
@@ -146,6 +156,7 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     if (a0 === 'am' && a1 === 'kill-all') return ok();
     if (a0 === 'cat' && a1 === '/proc/meminfo') return opts.guest?.meminfo == null ? fail('sem meminfo') : ok(opts.guest.meminfo);
     if (a0 === 'ps' && a1 === '-A') return opts.guest?.ps == null ? fail('sem ps') : ok(opts.guest.ps);
+    if (a0 === 'dumpsys' && a1 === 'activity' && a2 === 'activities') return ok(emu.activities);
     if (a0 === 'dumpsys' && a1 === 'meminfo') return opts.guest?.dumpsys == null ? fail('sem dumpsys') : ok(opts.guest.dumpsys);
     return fail(`/system/bin/sh: ${a0}: inexistente no fake`, 127);
   }
@@ -217,6 +228,9 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     if (cmd === 'sysctl') return ok(`${opts.swap ?? 'total = 2048.00M  used = 100.00M  free = 1948.00M  (encrypted)'}\n`);
     if (cmd === 'pgrep') return opts.host?.pgrep == null ? { code: 1 } : ok(opts.host.pgrep);
     if (cmd === 'footprint') return opts.host?.footprint == null ? fail('footprint: falhou', 1) : ok(opts.host.footprint);
+    if (cmd === 'ps' && args.includes('command=') && watchers.has(Number(args[args.length - 1]))) {
+      return ok(`${watchers.get(Number(args[args.length - 1]))}\n`);
+    }
     if (cmd === 'ps' && args.includes('command=')) return opts.host?.cmdline == null ? { code: 1 } : ok(`${opts.host.cmdline}\n`);
     if (cmd === 'ps') return opts.host?.rss == null ? { code: 1 } : ok(opts.host.rss);
     return undefined;
@@ -231,6 +245,12 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
   const spawnCalls: FakeSpawnCall[] = [];
   const spawnDetached: SpawnDetached = async (cmd, args, o) => {
     spawnCalls.push({ cmd, args: [...args], opts: o });
+    if (args.includes('_idle-watch')) {
+      // Watcher do auto-desligar: so ganha pid e linha de comando (para o ps).
+      const pid = nextPid++;
+      watchers.set(pid, [cmd, ...args].join(' '));
+      return { pid };
+    }
     if (cmd !== tools.emulator) throw new Error(`fake spawnDetached: comando inesperado ${cmd}`);
     const avd = args[args.indexOf('-avd') + 1];
     const portIdx = args.indexOf('-port');
@@ -262,6 +282,13 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     emulators,
     addEmulator,
     deviceCommands,
+    watchers,
+    signals,
+    signalPid: ((pid, signal) => {
+      signals.push({ pid, signal });
+      watchers.delete(pid);
+    }) as SignalPid,
+    pidAlive: (pid: number) => watchers.has(pid),
   };
 }
 

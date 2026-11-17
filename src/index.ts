@@ -1,7 +1,7 @@
 // API publica da lib devslim. A CLI (src/cli.ts) e uma camada fina por cima.
 export { DevslimError, UsageError } from './errors.ts';
 export { writeFileAtomic } from './fsAtomic.ts';
-export { nodeExec, createFakeExec, nodeSpawnDetached, createFakeSpawnDetached } from './exec.ts';
+export { nodeExec, createFakeExec, nodeSpawnDetached, createFakeSpawnDetached, nodeSignalPid } from './exec.ts';
 export type {
   Exec,
   ExecOptions,
@@ -11,6 +11,7 @@ export type {
   SpawnDetached,
   SpawnDetachedOptions,
   FakeSpawnCall,
+  SignalPid,
 } from './exec.ts';
 export {
   devslimHome,
@@ -125,6 +126,7 @@ export {
   sessionPath,
   loadSession,
   recordSession,
+  updateSession,
   removeSession,
   runningEmulators,
   bootedSimulators,
@@ -136,7 +138,7 @@ export {
   swapWarning,
   SWAP_WARN_RATIO,
 } from './android/session.ts';
-export type { SessionEntry, BootedSimulator, DeviceCensus, SwapUsage } from './android/session.ts';
+export type { SessionEntry, IdleDownRecord, BootedSimulator, DeviceCensus, SwapUsage } from './android/session.ts';
 export {
   upAvd,
   bakeAvd,
@@ -279,3 +281,23 @@ export type { EffectiveHardware, LastBootRam } from './android/hardwareQemu.ts';
 export { classifyLauncher, parseQemuProcesses, listQemuProcesses, processCommandLine, launcherFor, launcherText } from './android/launcher.ts';
 export type { Launcher, QemuProcess } from './android/launcher.ts';
 export type { TopDownOutcome, AnyMeasurement } from './topLevel.ts';
+
+// Auto-desligar (`up --idle-down`): duracao, primeiro plano, laco e watcher.
+export {
+  parseIdleDuration,
+  formatDuration,
+  isSystemPackage,
+  androidForeground,
+  iosForeground,
+  idleLoop,
+  startIdleWatcher,
+  stopIdleWatcher,
+  sessionMatcher,
+  idleLogFile,
+  IDLE_MIN_MS,
+  IDLE_POLL_MS,
+  MAX_PROBE_FAILURES,
+} from './idle.ts';
+export type { IdleProbe, IdleOwnership, IdleStopReason, IdleLoopResult, IdleLoopOptions, IdleWatcherInfo, IdlePlatform } from './idle.ts';
+export { runIdleWatch } from './idleWatch.ts';
+export type { IdleWatchOptions } from './idleWatch.ts';

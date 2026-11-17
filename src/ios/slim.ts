@@ -4,8 +4,9 @@ import { sortCapabilities } from '../capabilities.ts';
 import { DevslimError } from '../errors.ts';
 import type { Adb } from '../android/adb.ts';
 import { resolveRuntime, type Runtime, type RuntimeContext } from '../android/deps.ts';
-import { assertSingleDevice, loadSession, recordSession, removeSession } from '../android/session.ts';
+import { assertSingleDevice, loadSession, recordSession, removeSession, type SessionEntry } from '../android/session.ts';
 import { swapGate } from '../swap.ts';
+import { stopIdleWatcher } from '../idle.ts';
 import { clearState, loadState, recordIosBackup, statePath as stateFile, type IosProfileRecord, type IosState } from '../state.ts';
 import { mergeStore, readStore, storePath, type StoreOptions } from './disabledStore.ts';
 import { labelsToDisable, managedSet, repairSet, touchableSet, validateExcept, validateKeep } from './labels.ts';
@@ -470,7 +471,7 @@ export async function downSim(query: string | undefined, ctx: IosContext & { for
   const session = loadSession(rt.env).filter((e) => e.platform === 'ios');
   const devices = await simctl.listDevices();
 
-  type Target = { udid: string; name: string; registered: boolean };
+  type Target = { udid: string; name: string; registered: boolean; entry?: SessionEntry };
   const targets: Target[] = [];
   if (query !== undefined) {
     const dev = resolveDevice(devices, query);
@@ -478,9 +479,9 @@ export async function downSim(query: string | undefined, ctx: IosContext & { for
     if (entry === undefined && !force) {
       throw new DevslimError(`simulador ${dev.name} (${dev.udid}) nao foi subido pelo devslim (nada na sessao); --force para desligar mesmo assim`);
     }
-    targets.push({ udid: dev.udid, name: dev.name, registered: entry !== undefined });
+    targets.push({ udid: dev.udid, name: dev.name, registered: entry !== undefined, ...(entry === undefined ? {} : { entry }) });
   } else {
-    for (const e of session) targets.push({ udid: e.serial, name: e.avd, registered: true });
+    for (const e of session) targets.push({ udid: e.serial, name: e.avd, registered: true, entry: e });
     if (force) {
       for (const d of devices) {
         if (d.state === 'Booted' && !targets.some((t) => t.udid === d.udid)) targets.push({ udid: d.udid, name: d.name, registered: false });
@@ -489,8 +490,10 @@ export async function downSim(query: string | undefined, ctx: IosContext & { for
   }
 
   const out: DownSimOutcome[] = [];
-  for (const t of targets) {
+  for (const { entry, ...t } of targets) {
     const drop = () => removeSession((e) => e.platform === 'ios' && e.serial === t.udid, rt.env);
+    // Auto-desligar: o watcher sai antes do device (e o campo da sessao junto).
+    if (entry !== undefined) await stopIdleWatcher(entry, rt);
     const dev = devices.find((d) => d.udid === t.udid);
     if (dev === undefined || dev.state === 'Shutdown') {
       drop();

@@ -221,7 +221,8 @@ test('cli status --json: chaves exatas e estaveis; texto uma linha por device; s
     'avd', 'dir', 'exists', 'tuned', 'ramMb', 'gpu', 'ramRequestedMb', 'ramEffectiveMb', 'ramFloored', 'gpuEffective',
     'baked', 'bakedAt', 'running', 'runningBy', 'pid', 'hasState', 'launcher', 'advertised', 'grpcPort',
   ]);
-  assert.deepEqual(Object.keys(s.session[0]), ['platform', 'name', 'id', 'pid', 'startedAt', 'alive', 'stale']);
+  assert.deepEqual(Object.keys(s.session[0]), ['platform', 'name', 'id', 'pid', 'startedAt', 'alive', 'stale', 'idleDown']);
+  assert.equal(s.session[0].idleDown, null);
   assert.deepEqual(Object.keys(s.swap), ['usedMb', 'totalMb', 'percent']);
 
   const t = await run(['status']);

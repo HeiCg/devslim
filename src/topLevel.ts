@@ -5,6 +5,7 @@ import { loadSession, removeSession } from './android/session.ts';
 import { downSim, type DownSimOutcome, type IosContext } from './ios/slim.ts';
 import { measureAvd, measureSim, type AndroidMeasurement, type IosMeasurement } from './measure.ts';
 import { listStates } from './state.ts';
+import { stopIdleWatcher } from './idle.ts';
 import { avdLiveness, listSimDevices, sessionStatus, type SessionStatus } from './status.ts';
 
 // Comandos de topo: `devslim down` e `devslim measure` cobrem Android e iOS.
@@ -48,10 +49,12 @@ export async function downAll(ctx: IosContext & { force?: boolean } = {}): Promi
   const entries = loadSession(rt.env);
   if (entries.length === 0 && !force) return [];
   const devices = entries.some((e) => e.platform === 'ios') ? await listSimDevices(rt) : [];
-  const st = await sessionStatus(entries, { exec: rt.exec, env: rt.env, devices });
+  const st = await sessionStatus(entries, { exec: rt.exec, env: rt.env, devices, pidAlive: rt.pidAlive });
 
   const out: TopDownOutcome[] = [];
   for (const s of st.filter((x) => x.stale)) {
+    const entry = entries.find((e) => e.platform === s.platform && e.serial === s.id);
+    if (entry !== undefined) await stopIdleWatcher(entry, rt);
     removeSession((e) => e.platform === s.platform && e.serial === s.id, rt.env);
     out.push(Object.freeze({
       platform: s.platform,

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Exec, ExecOptions, ExecResult, FakeCall } from '../exec.ts';
+import type { Exec, ExecOptions, ExecResult, FakeCall, FakeSpawnCall, SignalPid, SpawnDetached } from '../exec.ts';
 import { parseStorePlist } from './disabledStore.ts';
 
 // Mundo iOS falso para testes: simuladores em memoria, launchd_sim que le o
@@ -19,7 +19,11 @@ export type FakeSimInit = {
   runtimeId?: string;
   isAvailable?: boolean;
   live?: Readonly<Record<string, boolean>>; // tabela do launchd se ja bootado
+  launchctlList?: string; // saida de `launchctl list` (padrao: so apps da Apple)
 };
+
+export const FAKE_APPLE_LAUNCHCTL_LIST =
+  'PID\tStatus\tLabel\n512\t0\tcom.apple.SpringBoard\n801\t0\tUIKitApplication:com.apple.Preferences[77b2][rb-legacy]\n';
 
 export type FakeSim = {
   udid: string;
@@ -30,6 +34,7 @@ export type FakeSim = {
   live: Map<string, boolean>; // launchd vivo (vale com Booted)
   overrides: Map<string, boolean>; // gravado por launchctl disable/enable; sobrevive a reboot
   boots: number;
+  launchctlList: string;
 };
 
 export type FakeIosOptions = {
@@ -66,9 +71,22 @@ export function createFakeIos(opts: FakeIosOptions) {
       live: new Map(Object.entries(s.live ?? {})),
       overrides: new Map(),
       boots: 0,
+      launchctlList: s.launchctlList ?? FAKE_APPLE_LAUNCHCTL_LIST,
     });
   }
   const concurrency = { now: 0, max: 0 };
+  // Watchers do auto-desligar "vivos" (pid -> linha de comando) e sinais recebidos.
+  const watchers = new Map<number, string>();
+  const signals: { pid: number; signal: string }[] = [];
+  const spawnCalls: FakeSpawnCall[] = [];
+  let nextPid = 60000;
+  const spawnDetached: SpawnDetached = async (cmd, args, o) => {
+    spawnCalls.push({ cmd, args: [...args], opts: o });
+    if (!args.includes('_idle-watch')) throw new Error(`fake ios spawnDetached: comando inesperado ${cmd}`);
+    const pid = nextPid++;
+    watchers.set(pid, [cmd, ...args].join(' '));
+    return { pid };
+  };
 
   const ok = (stdout = ''): Partial<ExecResult> => ({ code: 0, stdout });
   const fail = (stderr: string, code = 1): Partial<ExecResult> => ({ code, stderr });
@@ -160,6 +178,7 @@ export function createFakeIos(opts: FakeIosOptions) {
         return ok(printDisabled(sim));
       }
       if ((verb === 'disable' || verb === 'enable') && a1?.startsWith('system/')) return launchctlSet(sim, verb, a1);
+      if (verb === 'list' && a1 === undefined) return ok(sim.launchctlList);
     }
     return undefined;
   }
@@ -175,6 +194,8 @@ export function createFakeIos(opts: FakeIosOptions) {
     else if (cmd === 'sysctl') res = ok(`${opts.swap ?? 'total = 2048.00M  used = 100.00M  free = 1948.00M  (encrypted)'}\n`);
     else if (cmd === join(FAKE_SDK, 'platform-tools', 'adb') && args[0] === 'devices') {
       res = ok(`List of devices attached\n${(opts.emulators ?? []).map((s) => `${s}\tdevice\n`).join('')}\n`);
+    } else if (cmd === 'ps' && args.includes('command=') && watchers.has(Number(args[args.length - 1]))) {
+      res = ok(`${watchers.get(Number(args[args.length - 1]))}\n`);
     } else if (cmd === 'pgrep') res = opts.measure?.pgrep == null ? { code: 1 } : ok(opts.measure.pgrep);
     else if (cmd === 'ps') res = opts.measure?.ps == null ? { code: 1 } : ok(opts.measure.ps);
     else if (cmd === 'top') res = opts.measure?.top == null ? { code: 1 } : ok(opts.measure.top);
@@ -192,6 +213,15 @@ export function createFakeIos(opts: FakeIosOptions) {
     sims,
     concurrency,
     simctlCommands,
+    spawnDetached,
+    spawnCalls,
+    watchers,
+    signals,
+    signalPid: ((pid, signal) => {
+      signals.push({ pid, signal });
+      watchers.delete(pid);
+    }) as SignalPid,
+    pidAlive: (pid: number) => watchers.has(pid),
     sleep: async (ms: number) => {
       sleeps.push(ms);
       clock.t += ms;

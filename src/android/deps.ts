@@ -1,4 +1,4 @@
-import { nodeExec, nodeSpawnDetached, type Exec, type SpawnDetached } from '../exec.ts';
+import { nodeExec, nodeSignalPid, nodeSpawnDetached, type Exec, type SignalPid, type SpawnDetached } from '../exec.ts';
 import { createAdb, realSleep, type Adb, type Sleep } from './adb.ts';
 import { nodePidAlive, runningDir, type PidAlive } from './runningIni.ts';
 import { defaultDirExists, findSdkTool, type SdkTool } from './sdk.ts';
@@ -26,6 +26,8 @@ export type RuntimeContext = {
   runningDir?: string | null;
   // Pid do pid_<pid>.ini ainda vivo? Ausente = process.kill(pid, 0).
   pidAlive?: PidAlive;
+  // SIGTERM no watcher do auto-desligar. Ausente = process.kill.
+  signalPid?: SignalPid;
 };
 
 export type Runtime = Readonly<{
@@ -43,6 +45,7 @@ export type Runtime = Readonly<{
   pollMs: number | undefined;
   runningDir: string | null;
   pidAlive: PidAlive;
+  signalPid: SignalPid;
   tool: (name: SdkTool) => string;
   adb: () => Adb;
 }>;
@@ -69,6 +72,7 @@ export function resolveRuntime(ctx: RuntimeContext = {}): Runtime {
     pollMs: ctx.pollMs,
     runningDir: ctx.runningDir !== undefined ? ctx.runningDir : runningDir({ env }),
     pidAlive: ctx.pidAlive ?? nodePidAlive,
+    signalPid: ctx.signalPid ?? nodeSignalPid,
     tool,
     adb: () => (adb ??= createAdb({ adbPath: tool('adb'), exec, env, sleep, now })),
   });

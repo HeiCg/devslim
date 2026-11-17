@@ -66,7 +66,9 @@ da linha de comando do qemu (`pgrep -fl qemu-system`, ou `ps -o command= -p
   `null`. Entrada cujo pid ja morreu nao conta. Rodando sem anuncio, o texto ganha o sufixo ` sem anuncio gRPC`. O
   valor do token nunca e lido para fora, so se ele existe.
 - `session` lista o que o devslim subiu. Entrada cujo device nao roda mais vem
-  com `stale: true`.
+  com `stale: true`. `idleDown` traz `{ms, watcherPid, watcherAlive}` quando o
+  device subiu com `--idle-down` (ver "Auto-desligar") e `null` sem ele; no
+  texto, `auto-desligar em 30m sem app em uso (watcher pid N vivo)` ou `MORTO`.
 - `swap` traz `usedMb`, `totalMb` e `percent`, lidos de `sysctl vm.swapusage`.
 
 `doctor` devolve uma lista de `{id, level, message, fix?}` com `level` em `ok`,
@@ -89,7 +91,7 @@ da linha de comando do qemu (`pgrep -fl qemu-system`, ou `ps -o command= -p
 | `orphan-images` | system image que nenhum `config.ini` usa, com o tamanho; nunca apaga |
 | `swap` | acima de 80% e warn, acima de 95% e fail (mesmos limites e mesma mensagem da recusa do `up`) |
 | `ios-always-enabled` | store de simulador que desliga assistantd, gamed ou sharingd |
-| `stale-session` | entradas mortas na sessao |
+| `stale-session` | entradas mortas na sessao; e, para device rodando com auto-desligar, watcher cujo pid morreu (fix: `devslim <plataforma> up <id> --idle-down <dur>` ou `devslim down`) |
 
 `avd-image` so le. A nota de imagem mais leve sai como ok (nao conta como warn
 nem muda o exit) e traz o fix `devslim android create <avd>-atd --image
@@ -132,6 +134,7 @@ devslim android create ui-api35 --image aosp_atd   # ou: imagem ATD, mais leve, 
 devslim android tune slim-api35          # ou: tune num AVD existente (backup do config.ini antes)
 devslim android bake slim-api35          # uma vez: boota, enxuga via adb, grava slim_base, desliga
 devslim android up slim-api35            # dia a dia: sobe do slim_base com flags economicas
+devslim android up slim-api35 --idle-down 30m   # ou: desliga sozinho depois de 30 min sem app em uso
 devslim down                             # desliga o que subiu
 devslim android up slim-api35            # restore precisa do AVD rodando se houve bake
 devslim android restore slim-api35       # religa pacotes, devolve settings e o config.ini byte a byte
@@ -233,6 +236,7 @@ Nunca desliga bluetooth nem Chrome. O state fica em
 ```
 devslim ios plan QA-iPhone17             # so leitura: o que o up desligaria e o que repararia
 devslim ios up QA-iPhone17               # escreve o store com o device desligado, boota e confere
+devslim ios up QA-iPhone17 --idle-down 30m   # ou: desliga sozinho depois de 30 min sem app em uso
 devslim ios off QA-iPhone17              # devolve cada label ao valor salvo
 ```
 
@@ -347,6 +351,75 @@ se encontrar o AVD rodando assim.
 - O devslim lanca com `-feature -Vulkan`, igual ao argent, para o probe de
   snapshot do argent nao recusar e regravar `ram.bin`.
 
+## Auto-desligar
+
+Um device esquecido custa de 1 a 5 GB de RAM. Com `--idle-down <dur>`, o `up`
+deixa um processo destacado que desliga o device quando ninguem usa:
+
+```
+devslim android up slim-api35 --idle-down 30m
+devslim ios up QA-iPhone17 --idle-down 1h
+```
+
+`<dur>` aceita `30m`, `90s`, `1h` ou um numero puro, lido como minutos. O minimo
+e 2 minutos; abaixo disso, ou em outro formato, e erro de uso antes de bootar.
+Vale so para `android up` e `ios up`, nunca fica salvo no perfil do `tune` e,
+sem a flag, nada muda.
+
+O `up` imprime uma linha `auto-desligar: apos <dur> sem app em uso (watcher
+pid <n>, log <caminho>)` e, no `--json`, ganha `idleDown: {ms, watcherPid,
+startedAt, logFile}`. O watcher e o processo `node bin/devslim _idle-watch
+<plataforma> <id> --idle-ms <n>` (subcomando interno, fora do `--help`), com
+stdout e stderr em `$DEVSLIM_HOME/logs/idle-<id>.log`; `<id>` e o nome do AVD
+no Android e o UDID no iOS. A sessao guarda `idleDown: {ms, watcherPid,
+startedAt}` na entrada do device. Um segundo `up --idle-down` do mesmo device
+termina o watcher anterior e sobe outro com a duracao nova.
+
+Parado quer dizer nenhum app de terceiro em uso. A cada 30 s o watcher olha:
+
+- Android: a linha `topResumedActivity=` (ou `ResumedActivity:`, grafia por
+  display e de versoes antigas) de `adb -s <serial> shell dumpsys activity
+  activities`. Pacote que comeca com `com.android.`, `com.google.android.` ou
+  `android` (launcher, Settings, apps do sistema) nao conta como uso, nem saida
+  vazia ou ilegivel enquanto o device responde ao adb. Qualquer outro pacote em
+  primeiro plano conta.
+- iOS: `xcrun simctl spawn <udid> launchctl list`. Uma entrada
+  `UIKitApplication:<bundle>` com bundle fora de `com.apple.` conta como uso.
+
+Uso visto zera o relogio. Com a duracao inteira parado, o watcher confere de
+novo a sessao e desliga pelo mesmo caminho de `devslim android down <avd>` ou
+`devslim ios down <udid>` (a entrada sai da sessao do mesmo jeito), escreve no
+log uma linha com hora, device e quanto tempo ficou parado, e sai.
+
+O watcher sai sem desligar nada quando:
+
+- o device nao esta mais rodando (serial fora do `adb devices`, simulador fora
+  de `Booted`);
+- a entrada do device sumiu da sessao ou e de outro boot (pid ou `startedAt`
+  diferente do que havia quando o watcher subiu);
+- o registro `idleDown` da entrada nao tem mais o pid dele (um `down` ou um novo
+  `up --idle-down` tirou);
+- a sondagem falha 3 vezes seguidas (cada falha vai para o log).
+
+Ele nunca desliga device que o devslim nao subiu: sem entrada na sessao, o `up
+--idle-down` so avisa em stderr (`auto-desligar ignorado`) e nao lanca watcher.
+`devslim down`, `devslim android down` e `devslim ios down` mandam SIGTERM ao
+watcher registrado antes de desligar o device e limpam o campo, mesmo quando o
+desligamento falha. Antes do sinal, o `down` confere com `ps -o command= -p
+<pid>` que o pid ainda e o watcher deste device; pid morto ou reaproveitado so
+tem o campo limpo.
+
+`status` mostra `auto-desligar em <dur>` na linha da sessao e se o pid do
+watcher vive. O `doctor` (`stale-session`) avisa quando o watcher morreu com o
+device ainda rodando: o device nao vai mais desligar sozinho, e o motivo esta no
+log `idle-<id>.log`.
+
+Limite: o criterio e app de terceiro em primeiro plano, nao atividade em geral.
+Um device usado so por adb ou pelo argent sem app de terceiro aberto (por
+exemplo parado na home durante um build longo, antes do `install`) conta como
+parado e desliga quando a duracao vence. Escolha uma duracao maior que o build,
+ou suba sem `--idle-down`.
+
 ## Uso como lib
 
 `src/index.ts` exporta tudo que a CLI usa. Todo processo passa por um `Exec`
@@ -381,6 +454,8 @@ console.log(up.serial, m.host.footprintMb);
 - Nao verificado ainda se a limpeza periodica do macOS alcanca
   `/private/var/tmp`.
 - `down` so conhece o que esta registrado na sessao, salvo `--force`.
+- O auto-desligar so enxerga app de terceiro em primeiro plano: device parado na
+  home durante um build longo conta como parado (ver "Auto-desligar").
 - A lista de pacotes Android veio do avdslim e o `bake` cruza cada um com
   `pm list packages` antes de desligar. Imagem diferente pode ter nomes que a
   lista nao cobre.

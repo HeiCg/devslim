@@ -19,6 +19,7 @@ import { classifyLauncher, launcherText, listQemuProcesses } from './android/lau
 import { findRunningEntry, isAdvertised, scanRunning } from './android/runningIni.ts';
 import { listStates, loadState, type AndroidState } from './state.ts';
 import { DEFAULT_API, imageTag, isAtdTag, isGoogleApisTag } from './android/images.ts';
+import { formatDuration } from './idle.ts';
 
 // `devslim doctor`: so leitura. Nunca chama adb, nunca executa o argent,
 // nunca apaga nada. Checagens por AVD/device: avd-gpu e avd-ram dao uma linha
@@ -498,19 +499,35 @@ async function checkIosAlwaysEnabled(rt: Runtime, ctx: IosContext): Promise<Chec
   return out.length > 0 ? out : [check('ios-always-enabled', 'ok', 'nenhum store de simulador desliga assistantd, gamed ou sharingd')];
 }
 
-async function checkStaleSession(rt: Runtime): Promise<Check> {
+// Entradas mortas na sessao; e, para device vivo com auto-desligar registrado,
+// watcher cujo pid morreu (o device nao vai mais desligar sozinho).
+async function checkStaleSession(rt: Runtime): Promise<Check[]> {
   const entries = loadSession(rt.env);
-  if (entries.length === 0) return check('stale-session', 'ok', 'sessao vazia');
+  if (entries.length === 0) return [check('stale-session', 'ok', 'sessao vazia')];
   const devices = entries.some((e) => e.platform === 'ios') ? await listSimDevices(rt) : [];
-  const st = await sessionStatus(entries, { exec: rt.exec, env: rt.env, devices });
+  const st = await sessionStatus(entries, { exec: rt.exec, env: rt.env, devices, pidAlive: rt.pidAlive });
   const stale = st.filter((e) => e.stale);
-  if (stale.length === 0) return check('stale-session', 'ok', `${entries.length} entrada(s) na sessao, todas vivas`);
-  return check(
-    'stale-session',
-    'warn',
-    `${stale.length} entrada(s) mortas na sessao: ${stale.map((e) => `${e.platform} ${e.name} ${e.id}`).join(', ')}`,
-    'devslim down',
-  );
+  const out: Check[] = [
+    stale.length === 0
+      ? check('stale-session', 'ok', `${entries.length} entrada(s) na sessao, todas vivas`)
+      : check(
+          'stale-session',
+          'warn',
+          `${stale.length} entrada(s) mortas na sessao: ${stale.map((e) => `${e.platform} ${e.name} ${e.id}`).join(', ')}`,
+          'devslim down',
+        ),
+  ];
+  for (const e of st) {
+    if (e.stale || e.idleDown === null || e.idleDown.watcherAlive) continue;
+    const id = e.platform === 'android' ? e.name : e.id;
+    out.push(check(
+      'stale-session',
+      'warn',
+      `${e.platform} ${e.name} ${e.id}: watcher do auto-desligar (pid ${e.idleDown.watcherPid}) morreu com o device rodando; ele nao vai desligar sozinho (motivo no log idle-${id}.log)`,
+      `devslim ${e.platform} up ${id} --idle-down ${formatDuration(e.idleDown.ms)}\nou devslim down`,
+    ));
+  }
+  return out;
 }
 
 export async function runDoctor(ctx: DoctorContext = {}): Promise<Check[]> {
@@ -534,7 +551,7 @@ export async function runDoctor(ctx: DoctorContext = {}): Promise<Check[]> {
     ...checkOrphanImages(root, list),
     await checkSwap(rt),
     ...(await checkIosAlwaysEnabled(rt, ctx)),
-    await checkStaleSession(rt),
+    ...(await checkStaleSession(rt)),
   ];
 }
 

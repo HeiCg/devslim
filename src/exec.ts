@@ -80,6 +80,19 @@ export const nodeSpawnDetached: SpawnDetached = (cmd, args, opts) =>
     });
   });
 
+// Sinal para um processo ja existente (o watcher do auto-desligar). "No such
+// process" (ESRCH) e ignorado; pid invalido (<= 1) nunca e sinalizado.
+export type SignalPid = (pid: number, signal: 'SIGTERM') => void;
+
+export const nodeSignalPid: SignalPid = (pid, signal) => {
+  if (!Number.isInteger(pid) || pid <= 1) return;
+  try {
+    process.kill(pid, signal);
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'ESRCH') throw err;
+  }
+};
+
 export type FakeCall = { cmd: string; args: string[]; opts: ExecOptions };
 export type FakeHandler = (call: FakeCall) => Partial<ExecResult> | undefined;
 

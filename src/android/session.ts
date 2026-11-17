@@ -17,6 +17,10 @@ type Env = Readonly<Record<string, string | undefined>>;
 // iOS usa o mesmo formato: `avd` = nome do simulador, `serial` = UDID,
 // `pid` e `port` = 0 (sem processo nem porta proprios).
 
+// Watcher do auto-desligar (`up --idle-down`): ms parado ate desligar, pid do
+// processo `devslim _idle-watch` e quando subiu. Ausente = sem auto-desligar.
+export type IdleDownRecord = Readonly<{ ms: number; watcherPid: number; startedAt: string }>;
+
 export type SessionEntry = Readonly<{
   platform: 'android' | 'ios';
   avd: string;
@@ -24,6 +28,7 @@ export type SessionEntry = Readonly<{
   pid: number;
   port: number;
   startedAt: string;
+  idleDown?: IdleDownRecord;
 }>;
 
 type SessionFile = { version: 1; entries: SessionEntry[] };
@@ -69,6 +74,24 @@ export function recordSession(entry: SessionEntry, env: Env = process.env): Sess
   const entries = [...rest, Object.freeze({ ...entry })];
   saveSession(entries, env);
   return entries;
+}
+
+// Reescreve as entradas que casam; devolve as novas (vazio = nada gravado).
+export function updateSession(
+  match: (e: SessionEntry) => boolean,
+  update: (e: SessionEntry) => SessionEntry,
+  env: Env = process.env,
+): SessionEntry[] {
+  const all = loadSession(env);
+  const changed: SessionEntry[] = [];
+  const entries = all.map((e) => {
+    if (!match(e)) return e;
+    const next = Object.freeze({ ...update(e) });
+    changed.push(next);
+    return next;
+  });
+  if (changed.length > 0) saveSession(entries, env);
+  return changed;
 }
 
 export function removeSession(match: (e: SessionEntry) => boolean, env: Env = process.env): SessionEntry[] {
