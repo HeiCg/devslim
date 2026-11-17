@@ -479,6 +479,7 @@ Android, API 35 arm64, pixel_7:
 | devslim padrao em imagem `aosp_atd` | 2560 MB | 3660 MB | 262 |
 | devslim padrao em imagem `google_atd` | 2560 MB | 4687 MB | 277 |
 | devslim padrao em imagem `aosp_atd` API 30 | 2048 MB | 2398 MB | 223 |
+| devslim `--aggressive` em imagem `aosp_atd` API 35 | 1536 MB | 2502 MB | 307 |
 
 O que as linhas mostram:
 
@@ -493,6 +494,9 @@ O que as linhas mostram:
   lowram (o piso de 2560 MB e da API 35) e o host ficou em 2398 MB. Serve para
   teste de UI e logica quando o `minSdk` do app aceita API 30; nao valida
   comportamento de Android 15.
+- Na API 35, `aosp_atd` com `--aggressive` chegou perto disso (2502 MB), com
+  a RAM do guest apertada (744 MB disponiveis). E a opcao mais leve que ainda
+  roda Android 15.
 - No guest, o Google Play Services usou 391 MB de PSS e o Gboard
   (`com.google.android.inputmethod.latin`) 81 MB.
 
