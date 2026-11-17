@@ -95,12 +95,42 @@ export function readRunningEntries(dir: string | null): RunningEntry[] {
   return out.sort((a, b) => a.pid - b.pid);
 }
 
+// O pid do nome do arquivo ainda existe? Um pid_<pid>.ini que sobrou de um
+// emulador morto (crash, kill -9) nao conta como anuncio. Padrao:
+// process.kill(pid, 0); EPERM = existe (processo de outro usuario).
+export type PidAlive = (pid: number) => boolean;
+
+export const nodePidAlive: PidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false; // 0 e negativo sinalizariam grupo
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === 'EPERM';
+  }
+};
+
+export type RunningScan = Readonly<{
+  live: readonly RunningEntry[]; // pid vivo: so estas contam como anuncio
+  stale: readonly RunningEntry[]; // pid morto: ignoradas (o arquivo nao e apagado)
+}>;
+
+// readRunningEntries separado por pid vivo/morto. So leitura: os arquivos
+// pertencem ao emulador/SDK e nunca sao apagados aqui.
+export function scanRunning(dir: string | null, alive: PidAlive = nodePidAlive): RunningScan {
+  const live: RunningEntry[] = [];
+  const stale: RunningEntry[] = [];
+  for (const e of readRunningEntries(dir)) (alive(e.pid) ? live : stale).push(e);
+  return Object.freeze({ live: Object.freeze(live), stale: Object.freeze(stale) });
+}
+
 // Anunciado de forma que o argent enxerga: grpc.port e grpc.token presentes.
 export function isAdvertised(e: RunningEntry | null | undefined): boolean {
   return e != null && e.grpcPort !== null && e.hasGrpcToken;
 }
 
 // Entrada do AVD (e da porta do console, quando dada). Varias: prefere a anunciada.
+// Recebe as entradas vivas (scanRunning(...).live) para nao casar pid morto.
 export function findRunningEntry(entries: readonly RunningEntry[], avd: string, serialPort?: number | null): RunningEntry | null {
   const hits = entries.filter((e) => e.avdName === avd && (serialPort == null || e.serialPort === serialPort));
   return hits.find(isAdvertised) ?? hits[0] ?? null;

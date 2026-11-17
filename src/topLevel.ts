@@ -1,5 +1,5 @@
 import { DevslimError } from './errors.ts';
-import { resolveRuntime } from './android/deps.ts';
+import { resolveRuntime, type Runtime } from './android/deps.ts';
 import { downAvd, type DownOutcome } from './android/runtime.ts';
 import { loadSession, removeSession } from './android/session.ts';
 import { downSim, type DownSimOutcome, type IosContext } from './ios/slim.ts';
@@ -9,12 +9,15 @@ import { avdLiveness, listSimDevices, sessionStatus, type SessionStatus } from '
 
 // Comandos de topo: `devslim down` e `devslim measure` cobrem Android e iOS.
 
+// result 'skipped': com --force e nada vivo na sessao daquela plataforma, a
+// ferramenta dela faltou (sem SDK Android, sem Xcode); name e id vazios, o
+// motivo vai em detail e num aviso em stderr. Nao conta como falha.
 export type TopDownOutcome = Readonly<{
   platform: 'android' | 'ios';
   name: string;
   id: string; // serial ou UDID
   registered: boolean;
-  result: DownOutcome['result'] | DownSimOutcome['result'];
+  result: DownOutcome['result'] | DownSimOutcome['result'] | 'skipped';
   detail?: string;
 }>;
 
@@ -26,6 +29,15 @@ const fromIos = (r: DownSimOutcome): TopDownOutcome =>
 
 const failedFor = (s: SessionStatus, err: unknown): TopDownOutcome =>
   Object.freeze({ platform: s.platform, name: s.name, id: s.id, registered: true, result: 'failed', detail: (err as Error).message });
+
+const skippedFor = (platform: 'android' | 'ios', err: unknown): TopDownOutcome =>
+  Object.freeze({ platform, name: '', id: '', registered: false, result: 'skipped', detail: (err as Error).message });
+
+function skipped(rt: Runtime, platform: 'android' | 'ios', err: unknown): TopDownOutcome {
+  const o = skippedFor(platform, err);
+  rt.stderr(`devslim: aviso: down --force pulou ${platform}: ${o.detail}\n`);
+  return o;
+}
 
 // Desliga tudo que a sessao registrou. Entradas mortas (status `stale`, sem adb)
 // saem da sessao sem nenhum comando no device; o resto vai para downAvd/downSim.
@@ -58,9 +70,11 @@ export async function downAll(ctx: IosContext & { force?: boolean } = {}): Promi
     try {
       out.push(...(await downAvd(undefined, { ...ctx, force })).map(fromAndroid));
     } catch (err) {
-      // Sem SDK com --force e nada nosso no Android: nada a fazer.
       if (!(err instanceof DevslimError)) throw err;
-      out.push(...liveAndroid.map((s) => failedFor(s, err)));
+      // Entrada viva que nao deu para desligar = failed. So --force e nada
+      // nosso no Android (ex.: sem SDK) = plataforma pulada, avisada.
+      if (liveAndroid.length > 0) out.push(...liveAndroid.map((s) => failedFor(s, err)));
+      else out.push(skipped(rt, 'android', err));
     }
   }
   if (liveIos.length > 0 || force) {
@@ -68,7 +82,8 @@ export async function downAll(ctx: IosContext & { force?: boolean } = {}): Promi
       out.push(...(await downSim(undefined, { ...ctx, force })).map(fromIos));
     } catch (err) {
       if (!(err instanceof DevslimError)) throw err;
-      out.push(...liveIos.map((s) => failedFor(s, err)));
+      if (liveIos.length > 0) out.push(...liveIos.map((s) => failedFor(s, err)));
+      else out.push(skipped(rt, 'ios', err));
     }
   }
   return out;

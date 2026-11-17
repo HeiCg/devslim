@@ -1,6 +1,6 @@
 import { nodeExec, nodeSpawnDetached, type Exec, type SpawnDetached } from '../exec.ts';
 import { createAdb, realSleep, type Adb, type Sleep } from './adb.ts';
-import { runningDir } from './runningIni.ts';
+import { nodePidAlive, runningDir, type PidAlive } from './runningIni.ts';
 import { findSdkTool, type SdkTool } from './sdk.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -22,6 +22,8 @@ export type RuntimeContext = {
   // Diretorio avd/running onde o emulador se anuncia; ausente = padrao da
   // plataforma (runningIni.ts), null = nao conferir.
   runningDir?: string | null;
+  // Pid do pid_<pid>.ini ainda vivo? Ausente = process.kill(pid, 0).
+  pidAlive?: PidAlive;
 };
 
 export type Runtime = Readonly<{
@@ -36,6 +38,7 @@ export type Runtime = Readonly<{
   exitTimeoutMs: number | undefined;
   pollMs: number | undefined;
   runningDir: string | null;
+  pidAlive: PidAlive;
   tool: (name: SdkTool) => string;
   adb: () => Adb;
 }>;
@@ -59,6 +62,7 @@ export function resolveRuntime(ctx: RuntimeContext = {}): Runtime {
     exitTimeoutMs: ctx.exitTimeoutMs,
     pollMs: ctx.pollMs,
     runningDir: ctx.runningDir !== undefined ? ctx.runningDir : runningDir({ env }),
+    pidAlive: ctx.pidAlive ?? nodePidAlive,
     tool,
     adb: () => (adb ??= createAdb({ adbPath: tool('adb'), exec, env, sleep, now })),
   });

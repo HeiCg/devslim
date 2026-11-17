@@ -1,7 +1,9 @@
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join, relative } from 'node:path';
 import { avdHome, findAvd, listAvds, type AvdInfo } from './android/avd.ts';
-import { getValue, parseIni } from './android/configIni.ts';
+import { applyProfile, getValue, parseIni, type IniDoc } from './android/configIni.ts';
+import { CAPABILITIES, sortCapabilities, type Capability } from './capabilities.ts';
+import type { AndroidProfile } from './android/profile.ts';
 import { resolveRuntime, type Runtime } from './android/deps.ts';
 import { loadSession } from './android/session.ts';
 import { findSdkRoot, sdkCandidates, sdkToolPath, type SdkTool } from './android/sdk.ts';
@@ -14,14 +16,14 @@ import { assessSwap, readSwap } from './swap.ts';
 import { dirSize, sizeText } from './dirSize.ts';
 import { isSoftwareGpu, parseRamMb, readEffectiveHardware } from './android/hardwareQemu.ts';
 import { classifyLauncher, launcherText, listQemuProcesses } from './android/launcher.ts';
-import { findRunningEntry, isAdvertised, readRunningEntries } from './android/runningIni.ts';
-import { loadState, type AndroidState } from './state.ts';
+import { findRunningEntry, isAdvertised, scanRunning } from './android/runningIni.ts';
+import { listStates, loadState, type AndroidState } from './state.ts';
 
 // `devslim doctor`: so leitura. Nunca chama adb, nunca executa o argent,
 // nunca apaga nada. Checagens por AVD/device: avd-gpu e avd-ram dao uma linha
-// por AVD (ultimo boot); running-off-profile, emulator-advertised, default-boot-snapshot,
-// orphan-images e ios-always-enabled dao uma linha por ocorrencia (ou um
-// unico ok).
+// por AVD (ultimo boot); profile-drift, running-off-profile, emulator-advertised,
+// default-boot-snapshot, orphan-images e ios-always-enabled dao uma linha por
+// ocorrencia (ou um unico ok).
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 export type Check = Readonly<{ id: string; level: CheckLevel; message: string; fix?: string }>;
@@ -180,6 +182,68 @@ function checkAvdRam(list: readonly AvdInfo[], home: string): Check[] {
   });
 }
 
+// config.ini de cada AVD com state x o que o perfil salvo produziria (mesmo
+// applyProfile do plan/tune: nada de mapeamento proprio aqui). A capacidade que
+// explica o drift sai de ligar/desligar cada uma no perfil e ver quais chaves
+// passam a bater. AVD ausente, config.ini ilegivel ou state sem perfil: pulado.
+// So leitura.
+function driftCapabilities(doc: IniDoc, profile: AndroidProfile, keys: ReadonlySet<string>): { caps: Capability[]; added: Capability[]; removed: Capability[] } {
+  const added: Capability[] = [];
+  const removed: Capability[] = [];
+  for (const cap of CAPABILITIES) {
+    const has = profile.capabilities.includes(cap);
+    const caps = has ? profile.capabilities.filter((c) => c !== cap) : [...profile.capabilities, cap];
+    const alt = applyProfile(doc, { ...profile, capabilities: sortCapabilities(caps) }).changes;
+    // Explica se alguma chave em drift deixa de mudar com a capacidade trocada.
+    const explains = [...keys].some((k) => !alt.some((c) => c.key === k)) && alt.every((c) => keys.has(c.key));
+    if (explains) (has ? removed : added).push(cap);
+  }
+  const caps = sortCapabilities([...profile.capabilities.filter((c) => !removed.includes(c)), ...added]);
+  return { caps, added, removed };
+}
+
+function checkProfileDrift(env: Runtime['env']): Check[] {
+  const names = listStates('android', { env });
+  if (names.length === 0) return [check('profile-drift', 'ok', 'nenhum AVD com state do devslim')];
+  const out: Check[] = [];
+  let clean = 0;
+  let skipped = 0;
+  for (const name of names) {
+    let profile: AndroidProfile | undefined;
+    let doc: IniDoc | null = null;
+    let changes: ReturnType<typeof applyProfile>['changes'] = [];
+    try {
+      profile = loadState<AndroidState>('android', name, { env })?.profile;
+      if (profile === undefined || !Array.isArray(profile.capabilities)) throw new Error('state sem perfil');
+      doc = readIni(findAvd(name, { env }).configPath);
+      if (doc === null) throw new Error('config.ini ilegivel');
+      changes = applyProfile(doc, profile).changes;
+    } catch {
+      skipped++;
+      continue;
+    }
+    if (changes.length === 0) {
+      clean++;
+      continue;
+    }
+    const list = changes.map((c) => `${c.key}: atual=${c.from ?? '(ausente)'} esperado=${c.to}`).join('; ');
+    const hint = driftCapabilities(doc, profile, new Set(changes.map((c) => c.key)));
+    let fix = `devslim android tune ${name}`;
+    if (hint.added.length > 0 || hint.removed.length > 0) {
+      const why = [
+        ...(hint.added.length > 0 ? [`pede ${hint.added.join(',')}`] : []),
+        ...(hint.removed.length > 0 ? [`dispensa ${hint.removed.join(',')}`] : []),
+      ].join(' e ');
+      const need = hint.caps.length > 0 ? hint.caps.join(',') : 'none';
+      fix = `devslim android tune ${name} --need ${need} (o config.ini atual ${why})\nou devslim android tune ${name} para voltar ao perfil salvo`;
+    }
+    out.push(check('profile-drift', 'warn', `${name}: config.ini difere do perfil salvo em ${changes.length} chave(s): ${list}`, fix));
+  }
+  if (out.length > 0) return out;
+  const skip = skipped > 0 ? `; ${skipped} pulado(s) (AVD ausente ou config.ini ilegivel)` : '';
+  return [check('profile-drift', 'ok', `${clean} AVD(s) com config.ini no perfil salvo${skip}`)];
+}
+
 // Emulador rodando agora fora do perfil: GPU efetiva por software, ou AVD
 // tunado lancado por outro (argent, Studio). Fatos da linha de comando do qemu
 // (pgrep -fl) e do hardware-qemu.ini deste boot; nunca adb.
@@ -227,18 +291,25 @@ async function checkRunningOffProfile(rt: Runtime): Promise<Check[]> {
 
 // Emulador rodando sem entrada com grpc.port + grpc.token em avd/running: o
 // argent (simulator-server) nao o enxerga para screenshot/describe/tap. Le so
-// o diretorio; o valor do token nunca sai do runningIni.ts.
+// o diretorio; o valor do token nunca sai do runningIni.ts. Entrada de pid
+// morto nao conta como anuncio; quando ha, vira uma linha ok so informativa
+// (o arquivo e do emulador/SDK, nada e apagado).
 async function checkEmulatorAdvertised(rt: Runtime): Promise<Check[]> {
   const procs = await listQemuProcesses(rt.exec);
-  if (procs.length === 0) return [check('emulator-advertised', 'ok', 'nenhum emulador rodando')];
   const dir = rt.runningDir;
+  const scan = scanRunning(dir, rt.pidAlive);
+  const staleNote = scan.stale.length === 0 ? [] : [check(
+    'emulator-advertised',
+    'ok',
+    `${scan.stale.length} entrada(s) de emulador morto em ${dir} ignorada(s): ${scan.stale.map((e) => `pid_${e.pid}.ini (${e.avdName})`).join(', ')}; arquivos do emulador, nada apagado`,
+  )];
+  if (procs.length === 0) return [check('emulator-advertised', 'ok', 'nenhum emulador rodando'), ...staleNote];
   if (dir === null) {
     return [check('emulator-advertised', 'warn', `${procs.length} emulador(es) rodando; anuncio nao verificado (diretorio avd/running desconhecido nesta plataforma)`)];
   }
-  const entries = readRunningEntries(dir);
   const out: Check[] = [];
   for (const p of procs) {
-    const e = findRunningEntry(entries, p.avd);
+    const e = findRunningEntry(scan.live, p.avd);
     if (isAdvertised(e)) continue;
     const what = e === null ? `sem entrada em ${dir}` : `com entrada em ${dir} sem ${e.grpcPort === null ? 'grpc.port' : 'grpc.token'}`;
     out.push(check(
@@ -248,7 +319,7 @@ async function checkEmulatorAdvertised(rt: Runtime): Promise<Check[]> {
       `devslim android down ${p.avd} e devslim android up ${p.avd} (lanca com -grpc <porta> -grpc-use-token)`,
     ));
   }
-  return out.length > 0 ? out : [check('emulator-advertised', 'ok', `${procs.length} emulador(es) rodando, todos anunciados em ${dir}`)];
+  return [...(out.length > 0 ? out : [check('emulator-advertised', 'ok', `${procs.length} emulador(es) rodando, todos anunciados em ${dir}`)]), ...staleNote];
 }
 
 function checkArgentGpu(env: Runtime['env']): Check {
@@ -380,6 +451,7 @@ export async function runDoctor(ctx: DoctorContext = {}): Promise<Check[]> {
     checkEmulatorVersion(root),
     ...checkAvdGpu(list, home),
     ...checkAvdRam(list, home),
+    ...checkProfileDrift(rt.env),
     ...(await checkRunningOffProfile(rt)),
     ...(await checkEmulatorAdvertised(rt)),
     checkArgentGpu(rt.env),

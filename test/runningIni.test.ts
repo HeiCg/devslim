@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
-import { findRunningEntry, isAdvertised, parseRunningIni, readRunningEntries, runningDir } from '../src/android/runningIni.ts';
+import { findRunningEntry, isAdvertised, nodePidAlive, parseRunningIni, readRunningEntries, runningDir, scanRunning } from '../src/android/runningIni.ts';
 
 // Formato real de avd/running/pid_<pid>.ini (chaves relevantes); token de mentira.
 const FIXTURE = readFileSync(new URL('./fixtures/running-pid.ini', import.meta.url), 'utf8');
@@ -89,4 +89,41 @@ test('findRunningEntry: por avd e porta do console; prefere a anunciada', () => 
   assert.equal(findRunningEntry(entries, 'a', 5556), null);
   assert.equal(findRunningEntry(entries, 'b', null)!.grpcPort, 8556);
   assert.equal(findRunningEntry(entries, 'z'), null);
+});
+
+test('scanRunning: pid vivo = live e anunciado; pid morto = stale, nao anunciado, arquivo intacto', () => {
+  writeFileSync(join(dir, 'pid_100.ini'), RUNNING_INI());
+  writeFileSync(join(dir, 'pid_200.ini'), RUNNING_INI({ avd: 'b', serial: 5556, grpc: 8556 }));
+  const alive = (pid: number) => pid === 100;
+  const live = scanRunning(dir, alive);
+  assert.deepEqual(live.live.map((e) => e.pid), [100]);
+  assert.deepEqual(live.stale.map((e) => e.pid), [200]);
+  assert.equal(isAdvertised(findRunningEntry(live.live, 'bench-api35')), true, 'vivo anunciado');
+  assert.equal(findRunningEntry(live.live, 'b'), null, 'morto nao casa');
+  assert.equal(isAdvertised(findRunningEntry(live.live, 'b')), false);
+  assert.ok(readFileSync(join(dir, 'pid_200.ini'), 'utf8').includes('avd.name=b'), 'stale nao e apagado');
+  assert.deepEqual(scanRunning(null, alive), { live: [], stale: [] });
+});
+
+test('scanRunning: mesmo AVD com entrada morta anunciada e entrada viva = fica a viva', () => {
+  writeFileSync(join(dir, 'pid_100.ini'), RUNNING_INI({ serial: 5554, grpc: 8554 })); // velha, anunciada, morta
+  writeFileSync(join(dir, 'pid_300.ini'), RUNNING_INI({ serial: 5556, grpc: 8556 })); // atual
+  const { live, stale } = scanRunning(dir, (pid) => pid === 300);
+  const e = findRunningEntry(live, 'bench-api35')!;
+  assert.deepEqual([e.pid, e.serialPort, e.grpcPort, isAdvertised(e)], [300, 5556, 8556, true]);
+  assert.deepEqual(stale.map((x) => x.pid), [100]);
+  // As duas vivas: comportamento antigo (prefere a anunciada, menor pid primeiro).
+  assert.equal(findRunningEntry(scanRunning(dir, () => true).live, 'bench-api35')!.pid, 100);
+  // So a morta anunciada e uma viva sem token: a viva vence, nao anunciada.
+  writeFileSync(join(dir, 'pid_300.ini'), RUNNING_INI({ serial: 5556, grpc: 8556, token: null }));
+  const only = findRunningEntry(scanRunning(dir, (pid) => pid === 300).live, 'bench-api35')!;
+  assert.deepEqual([only.pid, isAdvertised(only)], [300, false]);
+});
+
+test('nodePidAlive: o proprio processo vive; pid invalido ou 0 = morto (sem sinalizar grupo)', () => {
+  assert.equal(nodePidAlive(process.pid), true);
+  assert.equal(nodePidAlive(0), false);
+  assert.equal(nodePidAlive(-1), false);
+  assert.equal(nodePidAlive(1.5), false);
+  assert.equal(nodePidAlive(2 ** 22 + 12345), false, 'acima do pid_max do macOS/Linux padrao');
 });

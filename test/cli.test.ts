@@ -173,6 +173,59 @@ test('tune --no-grpc persiste grpc: false no state; plan seguinte herda; state a
   assert.ok(JSON.parse(old.stdout).emulatorArgs.includes('-grpc-use-token'));
 });
 
+test('--grpc religa sobre o grpc: false salvo; sem flag herda false; tune --grpc persiste true', () => {
+  assert.equal(run(['android', 'tune', 'fake-api35', '--no-grpc']).code, 0);
+  const statePath = join(devslimHome, 'state', 'android', 'fake-api35.json');
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).profile.grpc, false);
+
+  const kept = JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout);
+  assert.equal(kept.profile.grpc, false, 'sem flag: herda o false salvo');
+  assert.ok(!kept.emulatorArgs.includes('-grpc'));
+
+  const on = run(['android', 'plan', 'fake-api35', '--grpc']);
+  assert.equal(on.code, 0, on.stderr);
+  assert.match(on.stdout, /perfil herdado do tune anterior/);
+  assert.match(on.stdout, /^perfil: .*grpc on, /m);
+  assert.match(on.stdout, /-grpc 8554 -grpc-use-token/);
+
+  assert.equal(run(['android', 'tune', 'fake-api35', '--grpc']).code, 0);
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).profile.grpc, true, 'tune --grpc grava true');
+  assert.equal(JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout).profile.grpc, true);
+});
+
+test('--grpc com --no-grpc = erro de uso em plan, tune, up e bake; nada escrito', () => {
+  const before = tree(avdDir);
+  for (const sub of ['plan', 'tune', 'up', 'bake']) {
+    const r = run(['android', sub, 'fake-api35', '--grpc', '--no-grpc']);
+    assert.equal(r.code, 2, `${sub}: ${r.stderr}`);
+    assert.equal(r.stderr.split('\n')[0], 'devslim: --grpc e --no-grpc nao combinam; use so um', sub);
+  }
+  assert.deepEqual(tree(avdDir), before);
+  assert.ok(!existsSync(join(devslimHome, 'state')), 'tune recusado nao grava state');
+});
+
+test('cli up e bake aceitam --grpc: religa sobre o state salvo com grpc false', async () => {
+  assert.equal(run(['android', 'tune', 'fake-api35', '--no-grpc']).code, 0);
+  const a = inProcess();
+  const up = await a.call(['android', 'up', 'fake-api35', '--grpc']);
+  assert.equal(up.code, 0, up.stderr);
+  assert.ok(a.fake.spawnCalls[0].args.includes('-grpc-use-token'));
+  const b = inProcess();
+  const bake = await b.call(['android', 'bake', 'fake-api35', '--grpc', '--force']);
+  assert.equal(bake.code, 0, bake.stderr);
+  assert.ok(b.fake.spawnCalls[0].args.includes('-grpc-use-token'));
+  const c = inProcess();
+  const plain = await c.call(['android', 'bake', 'fake-api35', '--force']);
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.ok(!c.fake.spawnCalls[0].args.includes('-grpc'), 'sem flag: herda grpc false');
+});
+
+test('help lista --grpc', () => {
+  const r = run(['--help']);
+  assert.match(r.stdout, /^ {2}--grpc {7,}/m);
+  assert.match(r.stdout, /\[--no-grpc\|--grpc\]|--grpc\]/);
+});
+
 test('erro de usuario: uma linha em stderr, sem stack, exit != 0', () => {
   for (const args of [
     ['android', 'plan', 'fake-api35', '--ram', '1024'],
@@ -356,7 +409,7 @@ function inProcess(opts: FakeAndroidOptions = {}) {
       stderr: (t) => { stderr += t; },
       env,
       cwd: root,
-      runtime: { exec: fake.exec, spawnDetached: fake.spawnDetached, sleep: fake.sleep, now: fake.now, date: fake.date, fileExists: fake.fileExists },
+      runtime: { exec: fake.exec, spawnDetached: fake.spawnDetached, sleep: fake.sleep, now: fake.now, date: fake.date, fileExists: fake.fileExists, pidAlive: () => true },
     });
     return { code, stdout, stderr };
   };

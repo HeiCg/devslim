@@ -43,7 +43,7 @@ uso:
                                          boota do snapshot slim_base (se houver) com flags economicas; avisa se o
                                          emulador elevou a RAM pedida, se o AVD ja roda fora do perfil (argent,
                                          GPU por software) e sugere bake quando nao ha slim_base
-  devslim android bake <avd> [--aggressive] [--need a,b] [--for <dir>] [--no-grpc] [--force]
+  devslim android bake <avd> [--aggressive] [--need a,b] [--for <dir>] [--no-grpc|--grpc] [--force]
                                          boota sem snapshot, enxuga via adb, grava snapshot slim_base e desliga
   devslim android down [<avd>] [--force] desliga o que o devslim subiu (--force: qualquer emulador)
   devslim android restore <avd> [--config-only]
@@ -71,6 +71,8 @@ flags de plan/tune/up (herdam o perfil do tune; flags sobrepoem):
   --port N         porta par entre 5554 e 5682 (serial emulator-N); gRPC em 8554 + (N - 5554)
   --no-grpc        lanca sem -grpc <porta> -grpc-use-token (o emulador nao grava o running ini
                    que o argent usa para screenshot/tap); tambem vale no bake
+  --grpc           religa o gRPC quando o tune salvou --no-grpc (sobrepoe o perfil salvo);
+                   tambem vale no bake; nao combina com --no-grpc
   --need a,b       capacidades: audio, camera, location, push, store, weblogin, window;
                    substitui as do tune; --need none limpa
   --for <dir>      deriva capacidades do package.json do app (tambem substitui as do tune)
@@ -110,12 +112,13 @@ const PROFILE_FLAGS: FlagSpec = Object.freeze({
   need: 'multi',
   for: 'value',
   'no-grpc': 'bool',
+  grpc: 'bool',
   json: 'bool',
 });
 const TUNE_FLAGS: FlagSpec = Object.freeze({ ...PROFILE_FLAGS, reset: 'bool' });
 const RESTORE_FLAGS: FlagSpec = Object.freeze({ json: 'bool', 'config-only': 'bool' });
 const UP_FLAGS: FlagSpec = Object.freeze({ ...PROFILE_FLAGS, force: 'bool' });
-const BAKE_FLAGS: FlagSpec = Object.freeze({ aggressive: 'bool', need: 'multi', for: 'value', 'no-grpc': 'bool', force: 'bool', json: 'bool' });
+const BAKE_FLAGS: FlagSpec = Object.freeze({ aggressive: 'bool', need: 'multi', for: 'value', 'no-grpc': 'bool', grpc: 'bool', force: 'bool', json: 'bool' });
 const DOWN_FLAGS: FlagSpec = Object.freeze({ force: 'bool', json: 'bool' });
 const MEASURE_FLAGS: FlagSpec = Object.freeze({ json: 'bool' });
 const CREATE_FLAGS: FlagSpec = Object.freeze({ image: 'value', device: 'value', json: 'bool' });
@@ -176,8 +179,10 @@ type ResolvedProfile = { profile: AndroidProfile; inherited: boolean };
 
 // Caminho unico do perfil de plan/tune/up/bake: o do tune (state) como base e
 // as flags dadas sobrepoem; sem state (ou com --reset), parte do padrao.
-// --need e --for SUBSTITUEM as capacidades salvas (nao unem).
+// --need e --for SUBSTITUEM as capacidades salvas (nao unem). --grpc e
+// --no-grpc sobrepoem o grpc salvo (o tune --no-grpc grava false).
 function resolveProfile(p: Parsed, io: CliIo, avd: string): ResolvedProfile {
+  if (p.bools.has('grpc') && p.bools.has('no-grpc')) throw new UsageError('--grpc e --no-grpc nao combinam; use so um');
   const state = p.bools.has('reset') ? null : loadState<AndroidState>('android', avd, { env: io.env });
   const base = state?.profile;
   const opts: AndroidProfileOptions =
@@ -203,6 +208,7 @@ function resolveProfile(p: Parsed, io: CliIo, avd: string): ResolvedProfile {
   if (p.values.screen !== undefined) opts.screen = p.values.screen;
   if (p.values.port !== undefined) opts.port = intFlag('port', p.values.port);
   if (p.bools.has('no-grpc')) opts.grpc = false;
+  if (p.bools.has('grpc')) opts.grpc = true;
   const need = needFlag(p);
   if (need !== undefined || p.values.for !== undefined) {
     opts.capabilities = resolveCapabilities({
@@ -595,9 +601,12 @@ async function runTop(cmd: 'status' | 'doctor' | 'down' | 'measure', args: reado
   }
   if (cmd === 'down') {
     const res = await downAll({ ...iosCtx(io), force: p.bools.has('force') });
+    // Plataforma pulada ja saiu em stderr; no texto ficam so os devices.
+    const done = res.filter((r) => r.result !== 'skipped');
     if (asJson) json(res);
     else if (res.length === 0) out(['nada a desligar (sessao vazia)']);
-    else out(res.map((r) => `${r.platform} ${r.name} ${r.id}: ${r.result}${r.detail ? ` (${r.detail})` : ''}`));
+    else if (done.length === 0) out(['nada a desligar']);
+    else out(done.map((r) => `${r.platform} ${r.name} ${r.id}: ${r.result}${r.detail ? ` (${r.detail})` : ''}`));
     return res.some((r) => r.result === 'failed') ? 1 : 0;
   }
   const res = await measureAll(iosCtx(io));

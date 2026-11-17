@@ -37,6 +37,8 @@ export const PLAY_STORE = 'com.android.vending';
 // Religados por capacidade: a capacidade presente tira o pacote do plano.
 export const KEPT_BY_CAPABILITY: Readonly<Partial<Record<Capability, readonly string[]>>> = Object.freeze({
   camera: Object.freeze(['com.android.camera2', 'com.android.cameraextensions']),
+  // App que usa mapa/geocoding costuma abrir o Maps (intents geo:, navegacao).
+  location: Object.freeze(['com.google.android.apps.maps']),
   store: Object.freeze([PLAY_STORE]),
 });
 

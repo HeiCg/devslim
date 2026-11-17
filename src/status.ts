@@ -4,7 +4,7 @@ import { resolveRuntime, type Runtime } from './android/deps.ts';
 import { readEffectiveHardware } from './android/hardwareQemu.ts';
 import { launcherFor, launcherText, listQemuProcesses, type Launcher } from './android/launcher.ts';
 import { hasSlimSnapshot } from './android/runtime.ts';
-import { findRunningEntry, isAdvertised, readRunningEntries, type RunningEntry } from './android/runningIni.ts';
+import { findRunningEntry, isAdvertised, scanRunning, type RunningEntry } from './android/runningIni.ts';
 import { loadSession, type SessionEntry } from './android/session.ts';
 import { readStore } from './ios/disabledStore.ts';
 import { labelsToDisable } from './ios/labels.ts';
@@ -184,7 +184,8 @@ async function iosStatus(rt: Runtime, ctx: IosContext, devices: readonly SimDevi
 // AVDs com state, mais todo emulador rodando de AVD sem state (pgrep -fl).
 async function androidStatus(rt: Runtime, session: readonly SessionEntry[]): Promise<AndroidStatus[]> {
   const processes = await listQemuProcesses(rt.exec);
-  const announced: readonly RunningEntry[] = readRunningEntries(rt.runningDir);
+  // So entradas de pid vivo: pid_<pid>.ini de emulador morto nao e anuncio.
+  const announced: readonly RunningEntry[] = scanRunning(rt.runningDir, rt.pidAlive).live;
   const stated = listStates('android', { env: rt.env });
   const unstated = [...new Set(processes.map((p) => p.avd))].filter((n) => !stated.includes(n));
   const out: AndroidStatus[] = [];

@@ -62,8 +62,8 @@ export {
 } from './android/configIni.ts';
 export type { IniDoc, IniLine, IniEntry, IniOther, IniChange } from './android/configIni.ts';
 export { buildLaunchArgs, grpcPortFor, GRPC_BASE_PORT, GRPC_REFERENCE_PORT, SLIM_SNAPSHOT, FORBIDDEN_SNAPSHOT } from './android/launchArgs.ts';
-export { runningDir, parseRunningIni, readRunningEntries, isAdvertised, findRunningEntry } from './android/runningIni.ts';
-export type { RunningEntry } from './android/runningIni.ts';
+export { runningDir, parseRunningIni, readRunningEntries, scanRunning, nodePidAlive, isAdvertised, findRunningEntry } from './android/runningIni.ts';
+export type { PidAlive, RunningEntry, RunningScan } from './android/runningIni.ts';
 export {
   BLOAT_CATEGORIES,
   NEVER_DISABLE,

@@ -24,7 +24,7 @@ import { swapGate } from '../swap.ts';
 import { fileSize, isSoftwareGpu, ramIncreaseLineFromLog, readEffectiveHardware } from './hardwareQemu.ts';
 import { launcherFor, launcherText, type Launcher } from './launcher.ts';
 import { findQemuPid } from '../measure.ts';
-import { findRunningEntry, isAdvertised, readRunningEntries } from './runningIni.ts';
+import { findRunningEntry, isAdvertised, scanRunning } from './runningIni.ts';
 
 const NAME_RE = /^[A-Za-z0-9._-]+$/;
 
@@ -200,7 +200,7 @@ async function findAdvertisement(
 ): Promise<{ advertised: boolean; grpcPort: number | null }> {
   const deadline = rt.now() + ADVERTISE_TIMEOUT_MS;
   for (;;) {
-    const e = findRunningEntry(readRunningEntries(rt.runningDir), avd, port);
+    const e = findRunningEntry(scanRunning(rt.runningDir, rt.pidAlive).live, avd, port);
     if (isAdvertised(e) || !wait || rt.runningDir === null || rt.now() >= deadline) {
       return { advertised: isAdvertised(e), grpcPort: e?.grpcPort ?? null };
     }

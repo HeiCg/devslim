@@ -87,6 +87,25 @@ test('capacidade camera mantem com.android.camera2 e com.android.cameraextension
   assert.deepEqual(planDisable({ installed, level: 'standard', capabilities: ['camera'] }), ['com.android.gallery3d']);
 });
 
+const MAPS = 'com.google.android.apps.maps';
+
+test('capacidade location mantem o Google Maps nas listas standard e aggressive', () => {
+  assert.ok(managedPackages('standard').includes(MAPS), 'Maps segue na lista gerida');
+  const installed = [MAPS, 'com.google.android.youtube', PLAY_STORE];
+  for (const level of ['standard', 'aggressive'] as const) {
+    const without = planDisable({ installed, level });
+    assert.ok(without.includes(MAPS), `${level} sem location desliga o Maps`);
+    const withLoc = planDisable({ installed, level, capabilities: ['location'] });
+    assert.ok(!withLoc.includes(MAPS), `${level} com location mantem o Maps`);
+    assert.deepEqual(withLoc, without.filter((p) => p !== MAPS), `${level}: location so tira o Maps`);
+  }
+  assert.deepEqual(planDisable({ installed, level: 'aggressive', capabilities: ['location', 'store'] }), ['com.google.android.youtube']);
+});
+
+test('planRestore com Maps desligado por bake anterior (sem location) ainda o religa', () => {
+  assert.deepEqual(planRestore([MAPS]), [MAPS]);
+});
+
 test('planRestore ignora pacote fora da lista gerida e deduplica', () => {
   assert.deepEqual(
     planRestore(['com.google.android.youtube', 'com.example.app', 'com.android.chrome', 'com.google.android.youtube', PLAY_STORE]),

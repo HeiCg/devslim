@@ -47,6 +47,7 @@ function world(opts: FakeAndroidOptions = {}) {
     fileExists: fake.fileExists,
     stderr: (t: string) => { stderr.push(t); },
     runningDir: running,
+    pidAlive: (_pid: number) => true, // pid_<pid>.ini dos testes de anuncio = emulador vivo
   };
   return { fake, env, ctx };
 }
@@ -515,4 +516,14 @@ test('up com o AVD ja rodando: le o anuncio uma vez, sem aviso', async () => {
   assert.deepEqual([r.alreadyRunning, r.advertised, r.grpcPort], [true, true, 8556]);
   assert.equal(stderr.join(''), '');
   noLeak(r);
+});
+
+test('up: pid_<pid>.ini anunciado de emulador morto nao conta; espera e avisa', async () => {
+  announce({ pid: 61000 });
+  const { fake, ctx } = world();
+  const r = await upAvd(AVD, buildAndroidProfile(), { ...ctx, pidAlive: (pid) => pid !== 61000 });
+  assert.deepEqual([r.advertised, r.grpcPort], [false, null]);
+  assert.ok(fake.sleeps.filter((ms) => ms === 500).length >= 19, 'esperou o anuncio');
+  assert.match(stderr.join(''), /nao se anunciou/);
+  assert.ok(existsSync(join(running, 'pid_61000.ini')), 'arquivo do emulador intacto');
 });

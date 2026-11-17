@@ -3,7 +3,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
-import { buildAndroidProfile } from '../src/android/profile.ts';
+import { applyProfile, parseIni, serializeIni, setValue } from '../src/android/configIni.ts';
+import { buildAndroidProfile, type AndroidProfileOptions } from '../src/android/profile.ts';
 import { recordSession } from '../src/android/session.ts';
 import { recordAndroidTune } from '../src/state.ts';
 import { main } from '../src/cli.ts';
@@ -41,6 +42,7 @@ type World = {
   env?: Record<string, string>;
   nodeVersion?: string;
   qemu?: Record<string, string>; // pid -> linha de comando do qemu rodando
+  alive?: (pid: number) => boolean; // pid de avd/running vivo; padrao: todos
 };
 
 const SWAP_OK = 'total = 2048.00M  used = 1024.00M  free = 1024.00M  (encrypted)';
@@ -117,7 +119,7 @@ function setup(w: World = {}) {
     PATH: bin,
     ...w.env,
   };
-  const ctx: DoctorContext = { env, exec, storeBase, nodeVersion: w.nodeVersion ?? 'v25.9.0' };
+  const ctx: DoctorContext = { env, exec, storeBase, nodeVersion: w.nodeVersion ?? 'v25.9.0', pidAlive: w.alive ?? (() => true) };
   return { exec, ctx, env };
 }
 
@@ -132,7 +134,7 @@ test('ordem e ids: todas as checagens aparecem, ambiente limpo = so ok, exit 0',
   const checks = await runDoctor(ctx);
   const ids = [...new Set(checks.map((c) => c.id))];
   assert.deepEqual(ids, [
-    'node', 'xcode', 'android-sdk', 'emulator-version', 'avd-gpu', 'avd-ram', 'running-off-profile', 'emulator-advertised', 'argent-gpu',
+    'node', 'xcode', 'android-sdk', 'emulator-version', 'avd-gpu', 'avd-ram', 'profile-drift', 'running-off-profile', 'emulator-advertised', 'argent-gpu',
     'default-boot-snapshot', 'orphan-images', 'swap', 'ios-always-enabled', 'stale-session',
   ]);
   assert.deepEqual(checks.filter((c) => c.level !== 'ok'), []);
@@ -433,7 +435,7 @@ test('cli doctor: fix de duas linhas sai indentado no texto', async () => {
   const { ctx, exec, env } = setup({ qemu: { 9421: argentLine('qa-tablet-api35') } });
   tuned('qa-tablet-api35', dir, env);
   let stdout = '';
-  await main(['doctor'], { stdout: (t) => { stdout += t; }, stderr: () => {}, env: ctx.env!, cwd: root, runtime: { exec, storeBase } });
+  await main(['doctor'], { stdout: (t) => { stdout += t; }, stderr: () => {}, env: ctx.env!, cwd: root, runtime: { exec, storeBase, pidAlive: ctx.pidAlive } });
   assert.match(stdout, /^\[warn\] running-off-profile: qa-tablet-api35 \(pid 9421\) rodando agora: /m);
   assert.match(stdout, /^ {7}fix: parar o emulador e subir com: devslim android up qa-tablet-api35\n {12}ou exportar ARGENT_EMULATOR_GPU_MODE=host no ambiente do argent$/m);
   noAdb(exec.calls);
@@ -487,10 +489,117 @@ test('cli doctor --json e texto: emulator-advertised sem token no output', async
   announce(RUNNING_FIXTURE);
   const { ctx, exec } = setup({ qemu: { 73808: devslimLine('bench-api35'), 9421: argentLine('qa-tablet-api35') } });
   let stdout = '';
-  await main(['doctor'], { stdout: (t) => { stdout += t; }, stderr: () => {}, env: ctx.env!, cwd: root, runtime: { exec, storeBase } });
-  await main(['doctor', '--json'], { stdout: (t) => { stdout += t; }, stderr: () => {}, env: ctx.env!, cwd: root, runtime: { exec, storeBase } });
+  await main(['doctor'], { stdout: (t) => { stdout += t; }, stderr: () => {}, env: ctx.env!, cwd: root, runtime: { exec, storeBase, pidAlive: ctx.pidAlive } });
+  await main(['doctor', '--json'], { stdout: (t) => { stdout += t; }, stderr: () => {}, env: ctx.env!, cwd: root, runtime: { exec, storeBase, pidAlive: ctx.pidAlive } });
   assert.match(stdout, /^\[warn\] emulator-advertised: qa-tablet-api35 \(pid 9421\) rodando sem entrada em /m);
   assert.doesNotMatch(stdout, /emulator-advertised: bench-api35/);
   assert.ok(!stdout.includes('abc123'));
   noAdb(exec.calls);
+});
+
+test('emulator-advertised: entrada de pid morto nao conta; linha ok informa a contagem; nada apagado', async () => {
+  makeAvd('bench-api35', { hq: 'hw.gpu.mode = host\n' });
+  announce(RUNNING_FIXTURE, 73900); // boot anterior que caiu
+  const { ctx, exec } = setup({ qemu: { 73808: devslimLine('bench-api35') }, alive: (pid) => pid !== 73900 });
+  const c = only(await runDoctor(ctx), 'emulator-advertised');
+  assert.deepEqual(c.map((x) => x.level), ['warn', 'ok']);
+  assert.match(c[0].message, /^bench-api35 \(pid 73808\) rodando sem entrada em /);
+  assert.equal(c[1].message, `1 entrada(s) de emulador morto em ${runningDirOf()} ignorada(s): pid_73900.ini (bench-api35); arquivos do emulador, nada apagado`);
+  assert.ok(existsSync(join(runningDirOf(), 'pid_73900.ini')), 'stale fica no disco');
+  assert.ok(!JSON.stringify(c).includes('abc123'));
+  assert.equal(doctorExitCode(await runDoctor(ctx)), 0, 'stale nao falha');
+
+  // Viva + morta do mesmo AVD: a viva anuncia, a morta so aparece na contagem.
+  announce(RUNNING_FIXTURE, 73808);
+  const both = only(await runDoctor(ctx), 'emulator-advertised');
+  assert.deepEqual(both.map((x) => [x.level, x.message.split(':')[0]]), [
+    ['ok', `1 emulador(es) rodando, todos anunciados em ${runningDirOf()}`],
+    ['ok', `1 entrada(s) de emulador morto em ${runningDirOf()} ignorada(s)`],
+  ]);
+
+  // Nada rodando: so a sobra.
+  const idle = only(await runDoctor(setup({ alive: () => false }).ctx), 'emulator-advertised');
+  assert.deepEqual(idle.map((x) => x.level), ['ok', 'ok']);
+  assert.equal(idle[0].message, 'nenhum emulador rodando');
+  assert.match(idle[1].message, /^2 entrada\(s\) de emulador morto em .*: pid_73808\.ini \(bench-api35\), pid_73900\.ini \(bench-api35\); /);
+  noAdb(exec.calls);
+});
+
+// ---------------------------------------------------------------------------
+// profile-drift: config.ini atual x o que o perfil salvo no state produziria
+
+const PHONE_INI = readFileSync(new URL('./fixtures/phone.config.ini', import.meta.url), 'utf8');
+
+// AVD tunado com o perfil: config.ini = saida do applyProfile sobre a fixture.
+function tunedAvd(name: string, env: Record<string, string>, opts: AndroidProfileOptions = {}): { dir: string; config: string } {
+  const profile = buildAndroidProfile(opts);
+  const config = serializeIni(applyProfile(parseIni(PHONE_INI), profile).doc);
+  const dir = makeAvd(name, { config });
+  recordAndroidTune(name, { avdDir: dir, originalConfigIni: PHONE_INI, originalConfigSha256: 'y', profile }, { env });
+  return { dir, config };
+}
+
+const editIni = (dir: string, edits: Record<string, string>) => {
+  let doc = parseIni(readFileSync(join(dir, 'config.ini'), 'utf8'));
+  for (const [k, v] of Object.entries(edits)) doc = setValue(doc, k, v);
+  writeFileSync(join(dir, 'config.ini'), serializeIni(doc));
+};
+
+test('profile-drift: sem state = ok; config.ini no perfil salvo = ok; so leitura', async () => {
+  assert.deepEqual(only(await runDoctor(setup().ctx), 'profile-drift').map((c) => [c.level, c.message]), [['ok', 'nenhum AVD com state do devslim']]);
+  const { ctx, env } = setup();
+  const { dir, config } = tunedAvd('bench-api35', env, { capabilities: ['camera'] });
+  const c = only(await runDoctor(ctx), 'profile-drift');
+  assert.deepEqual(c.map((x) => [x.level, x.message]), [['ok', '1 AVD(s) com config.ini no perfil salvo']]);
+  assert.equal(readFileSync(join(dir, 'config.ini'), 'utf8'), config, 'doctor nao escreve');
+});
+
+test('profile-drift: hw.gps=yes sem location no perfil = warn com --need somando as capacidades salvas', async () => {
+  const { ctx, env } = setup();
+  const { dir } = tunedAvd('bench-api35', env, { capabilities: ['camera'] });
+  editIni(dir, { 'hw.gps': 'yes' });
+  const before = readFileSync(join(dir, 'config.ini'), 'utf8');
+  const c = only(await runDoctor(ctx), 'profile-drift');
+  assert.equal(c.length, 1);
+  assert.equal(c[0].level, 'warn');
+  assert.equal(c[0].message, 'bench-api35: config.ini difere do perfil salvo em 1 chave(s): hw.gps: atual=yes esperado=no');
+  assert.equal(
+    c[0].fix,
+    'devslim android tune bench-api35 --need camera,location (o config.ini atual pede location)\nou devslim android tune bench-api35 para voltar ao perfil salvo',
+  );
+  assert.equal(readFileSync(join(dir, 'config.ini'), 'utf8'), before, 'so leitura');
+  assert.equal(doctorExitCode(await runDoctor(ctx)), 0, 'drift e warn, nao fail');
+});
+
+test('profile-drift: drift generico lista cada chave (ausente incluida); fix e so o tune', async () => {
+  const { ctx, env } = setup();
+  const { dir } = tunedAvd('bench-api35', env);
+  editIni(dir, { 'hw.ramSize': '4096', 'hw.gpu.mode': 'auto' });
+  writeFileSync(join(dir, 'config.ini'), readFileSync(join(dir, 'config.ini'), 'utf8').replace(/^showDeviceFrame=no\r?\n/m, ''));
+  const c = only(await runDoctor(ctx), 'profile-drift');
+  assert.deepEqual(c.map((x) => x.level), ['warn']);
+  assert.equal(
+    c[0].message,
+    'bench-api35: config.ini difere do perfil salvo em 3 chave(s): hw.ramSize: atual=4096 esperado=2048; hw.gpu.mode: atual=auto esperado=host; showDeviceFrame: atual=(ausente) esperado=no',
+  );
+  assert.equal(c[0].fix, 'devslim android tune bench-api35');
+});
+
+test('profile-drift: AVD com state mas ausente, ou config.ini ilegivel, e pulado sem falhar', async () => {
+  const { ctx, env } = setup();
+  recordAndroidTune('sumiu-api35', { avdDir: join(avdHome, 'sumiu-api35.avd'), originalConfigIni: 'x', originalConfigSha256: 'y', profile: buildAndroidProfile() }, { env });
+  const only1 = only(await runDoctor(ctx), 'profile-drift');
+  assert.deepEqual(only1.map((x) => [x.level, x.message]), [['ok', '0 AVD(s) com config.ini no perfil salvo; 1 pulado(s) (AVD ausente ou config.ini ilegivel)']]);
+
+  const { dir } = tunedAvd('bench-api35', env, { capabilities: ['location'] });
+  const broken = makeAvd('quebrado-api35');
+  recordAndroidTune('quebrado-api35', { avdDir: broken, originalConfigIni: 'x', originalConfigSha256: 'y', profile: buildAndroidProfile() }, { env });
+  rmSync(join(broken, 'config.ini'));
+  mkdirSync(join(broken, 'config.ini')); // diretorio no lugar do arquivo
+  editIni(dir, { 'hw.gps': 'no' });
+  const c = only(await runDoctor(ctx), 'profile-drift');
+  assert.deepEqual(c.map((x) => x.level), ['warn']);
+  assert.equal(c[0].message, 'bench-api35: config.ini difere do perfil salvo em 1 chave(s): hw.gps: atual=no esperado=yes');
+  assert.equal(c[0].fix, 'devslim android tune bench-api35 --need none (o config.ini atual dispensa location)\nou devslim android tune bench-api35 para voltar ao perfil salvo');
+  assert.equal(doctorExitCode(await runDoctor(ctx)), 0);
 });

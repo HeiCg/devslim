@@ -8,6 +8,7 @@ import { buildAndroidProfile } from '../src/android/profile.ts';
 import { loadSession, recordSession } from '../src/android/session.ts';
 import { main } from '../src/cli.ts';
 import type { Exec, ExecOptions, FakeCall } from '../src/exec.ts';
+import { DevslimError } from '../src/errors.ts';
 import { createFakeIos, type FakeIosOptions } from '../src/ios/fakeIos.ts';
 import { recordAndroidTune } from '../src/state.ts';
 import { downAll, measureAll } from '../src/topLevel.ts';
@@ -37,7 +38,9 @@ function makeAvd(name: string): string {
 }
 
 // Android e iOS falsos ao mesmo tempo; pgrep do qemu por nome de AVD.
-function world(o: { android?: FakeAndroidOptions; ios?: Partial<FakeIosOptions>; qemu?: Record<string, number> } = {}) {
+// noSdk: nenhum binario do SDK Android existe; noXcode: xcrun ausente do PATH
+// (mesmo erro do nodeExec em ENOENT).
+function world(o: { android?: FakeAndroidOptions; ios?: Partial<FakeIosOptions>; qemu?: Record<string, number>; noSdk?: boolean; noXcode?: boolean } = {}) {
   const android = createFakeAndroid({ avdHome, ...o.android });
   const ios = createFakeIos({ storeBase, ...o.ios });
   const calls: FakeCall[] = [];
@@ -51,13 +54,16 @@ function world(o: { android?: FakeAndroidOptions; ios?: Partial<FakeIosOptions>;
       }
       return ios.exec(cmd, args, opts);
     }
+    if (cmd === 'xcrun' && o.noXcode) throw new DevslimError('comando nao encontrado: xcrun');
     if (cmd === 'xcrun' || cmd === 'plutil' || cmd === 'top' || (cmd === 'ps' && args[0] === '-axo')) return ios.exec(cmd, args, opts);
     return android.exec(cmd, args, opts);
   };
   const env = { HOME: root, ANDROID_HOME: android.sdk, ANDROID_AVD_HOME: avdHome, DEVSLIM_HOME: home, PATH: '/usr/bin:/bin' };
-  const ctx = { env, exec, sleep: android.sleep, now: android.now, date: android.date, fileExists: android.fileExists, storeBase, stderr: () => {} };
+  const stderr: string[] = [];
+  const fileExists = o.noSdk ? () => false : android.fileExists;
+  const ctx = { env, exec, sleep: android.sleep, now: android.now, date: android.date, fileExists, storeBase, stderr: (t: string) => { stderr.push(t); } };
   const line = (c: FakeCall) => `${c.cmd} ${c.args.join(' ')}`;
-  return { android, ios, calls, ctx, env, line };
+  return { android, ios, calls, ctx, env, line, stderr };
 }
 
 test('down de topo: sessao vazia = nada, sem chamar adb nem simctl', async () => {
@@ -162,4 +168,68 @@ test('cli down e measure de topo: --json, texto e exit 0', async () => {
   assert.equal(s.code, 0, s.stderr);
   assert.equal(s.stdout, `ios QA-iPhone17 ${UDID}: stale (simulador desligado ou inexistente)\n`);
   assert.equal((await run(['down', 'x'])).code, 2);
+});
+
+test('down --force sem SDK Android: pula android com motivo em stderr e no resultado; iOS desligado; sem failed', async () => {
+  const w = world({ noSdk: true, ios: { simulators: [{ udid: UDID, name: 'QA-iPhone17', state: 'Booted' }] } });
+  const res = await downAll({ ...w.ctx, force: true });
+  assert.deepEqual(res.map((r) => [r.platform, r.result]), [['android', 'skipped'], ['ios', 'shutdown']]);
+  const skip = res[0];
+  assert.deepEqual([skip.name, skip.id, skip.registered], ['', '', false]);
+  assert.match(skip.detail!, /^adb nao encontrado; procurado em: .*\(defina ANDROID_HOME\)$/);
+  assert.equal(w.stderr.join(''), `devslim: aviso: down --force pulou android: ${skip.detail}\n`);
+  assert.ok(!res.some((r) => r.result === 'failed'));
+});
+
+test('down --force sem Xcode: pula ios com motivo; Android desligado', async () => {
+  makeAvd('slim-api35');
+  const w = world({ noXcode: true, android: { emulators: [{ avd: 'slim-api35', port: 5554 }] } });
+  const res = await downAll({ ...w.ctx, force: true });
+  assert.deepEqual(res.map((r) => [r.platform, r.name, r.result]), [['android', 'slim-api35', 'killed'], ['ios', '', 'skipped']]);
+  assert.equal(res[1].detail, 'comando nao encontrado: xcrun');
+  assert.equal(w.stderr.join(''), 'devslim: aviso: down --force pulou ios: comando nao encontrado: xcrun\n');
+});
+
+test('down --force com SDK e Xcode: nada pulado, nada em stderr', async () => {
+  makeAvd('slim-api35');
+  const w = world({
+    android: { emulators: [{ avd: 'slim-api35', port: 5554 }] },
+    ios: { simulators: [{ udid: UDID, name: 'QA-iPhone17', state: 'Booted' }] },
+  });
+  const res = await downAll({ ...w.ctx, force: true });
+  assert.deepEqual(res.map((r) => [r.platform, r.result]), [['android', 'killed'], ['ios', 'shutdown']]);
+  assert.deepEqual(w.stderr, []);
+});
+
+test('cli down --force: pulado vai para stderr (texto e --json), resultado no JSON, exit 0', async () => {
+  const run = async (w: ReturnType<typeof world>, args: string[]) => {
+    let stdout = '';
+    let stderr = '';
+    const code = await main(args, {
+      stdout: (t) => { stdout += t; },
+      stderr: (t) => { stderr += t; },
+      env: w.env,
+      cwd: root,
+      runtime: { exec: w.ctx.exec, sleep: w.ctx.sleep, now: w.ctx.now, date: w.ctx.date, fileExists: w.ctx.fileExists, storeBase },
+    });
+    return { code, stdout, stderr };
+  };
+  const both = world({ noSdk: true, noXcode: true });
+  const t = await run(both, ['down', '--force']);
+  assert.equal(t.code, 0, t.stderr);
+  assert.equal(t.stdout, 'nada a desligar\n');
+  assert.match(t.stderr, /^devslim: aviso: down --force pulou android: adb nao encontrado; /m);
+  assert.match(t.stderr, /^devslim: aviso: down --force pulou ios: comando nao encontrado: xcrun$/m);
+
+  const w = world({ noSdk: true, ios: { simulators: [{ udid: UDID, name: 'QA-iPhone17', state: 'Booted' }] } });
+  const j = await run(w, ['down', '--force', '--json']);
+  assert.equal(j.code, 0, j.stderr);
+  const out = JSON.parse(j.stdout) as Array<{ platform: string; result: string; detail?: string }>;
+  assert.deepEqual(out.map((r) => [r.platform, r.result]), [['android', 'skipped'], ['ios', 'shutdown']]);
+  assert.match(out[0].detail!, /^adb nao encontrado; /);
+  assert.match(j.stderr, /^devslim: aviso: down --force pulou android: /m);
+
+  const w2 = world({ noSdk: true, ios: { simulators: [{ udid: UDID, name: 'QA-iPhone17', state: 'Booted' }] } });
+  const txt = await run(w2, ['down', '--force']);
+  assert.equal(txt.stdout, `ios QA-iPhone17 ${UDID}: shutdown\n`, 'pulado nao repete no stdout');
 });

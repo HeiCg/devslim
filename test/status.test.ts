@@ -281,9 +281,9 @@ const ARGENT_LINE = `${QEMU} -avd qa-tablet-api35 -no-snapshot-load -gpu auto -f
 const DEVSLIM_LINE = `${QEMU} -avd bench-api35 -gpu host -memory 2048 -cores 2 -port 5554 -no-window -no-audio -camera-back none -camera-front none -feature -Vulkan -no-boot-anim -no-metrics -no-snapshot`;
 const STUDIO_LINE = `${QEMU} -netdelay none -netspeed full -avd Pixel_9_API_35 -qt-hide-window -grpc-use-token`;
 
-async function statusBoth(exec: ReturnType<typeof fakeExec>) {
+async function statusBoth(exec: ReturnType<typeof fakeExec>, pidAlive: (pid: number) => boolean = () => true) {
   let stdout = '';
-  const io = (out: (t: string) => void) => ({ stdout: out, stderr: () => {}, env, cwd: root, runtime: { exec, storeBase } });
+  const io = (out: (t: string) => void) => ({ stdout: out, stderr: () => {}, env, cwd: root, runtime: { exec, storeBase, pidAlive } });
   assert.equal(await main(['status'], io((t) => { stdout += t; })), 0);
   let js = '';
   assert.equal(await main(['status', '--json'], io((t) => { js += t; })), 0);
@@ -377,4 +377,16 @@ test('status: entrada sem token = nao anunciado (sufixo), grpcPort da entrada; s
   rmSync(join(root, 'Library'), { recursive: true });
   const none = await statusBoth(fakeExec({ pgrep: { 'bench-api35': '73808' }, qemu: { 73808: DEVSLIM_GRPC_LINE } }));
   assert.deepEqual([none.report.android[0].advertised, none.report.android[0].grpcPort], [false, null]);
+});
+
+test('status: pid_<pid>.ini de emulador morto nao conta como anuncio; arquivo fica', async () => {
+  makeAvd('bench-api35');
+  announce(RUNNING_FIXTURE, 73900); // sobra de um boot anterior que caiu
+  const exec = fakeExec({ pgrep: { 'bench-api35': '73808' }, qemu: { 73808: DEVSLIM_GRPC_LINE } });
+  const dead = await statusBoth(exec, (pid) => pid !== 73900);
+  assert.deepEqual([dead.report.android[0].advertised, dead.report.android[0].grpcPort], [false, null]);
+  assert.match(dead.stdout, /^android bench-api35: .*rodando \(pgrep pid 73808\) sem anuncio gRPC$/m);
+  assert.ok(readFileSync(join(root, 'Library', 'Caches', 'TemporaryItems', 'avd', 'running', 'pid_73900.ini'), 'utf8').length > 0);
+  const live = await statusBoth(exec, (pid) => pid === 73900);
+  assert.deepEqual([live.report.android[0].advertised, live.report.android[0].grpcPort], [true, 8554]);
 });
