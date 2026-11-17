@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Emulador Android e simulador iOS economicos em RAM/CPU (lib + CLI)",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "devslim": "bin/devslim"

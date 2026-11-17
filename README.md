@@ -8,14 +8,37 @@ de overrides de cada simulador antes de bootar. Toda mudanca guarda o estado
 anterior e tem comando para desfazer.
 
 E uma lib TypeScript com uma CLI fina por cima. Roda direto no Node 25 com type
-stripping, sem build e sem nenhuma dependencia npm. Spec: `../SPEC-devslim.md`.
+stripping, sem build e sem nenhuma dependencia npm.
+
+## Sem devslim x com devslim
+
+Mesmo Mac Apple Silicon, 2026-11-17, 2 min parado depois do boot, sem app
+aberto, uma medicao por linha. Detalhes e ressalvas em "Numeros medidos".
+
+Android, API 35 arm64, pixel_7, memoria do processo qemu no host
+(`phys_footprint`):
+
+| como subiu | RAM do guest | memoria no host | processos no guest |
+|---|---|---|---|
+| sem devslim (`google_apis`, headless) | 2560 MB | 5525 MB | 341 |
+| `devslim android up` | 2560 MB | 4590 MB (-17%) | 325 |
+| `devslim android up --aggressive` | 1536 MB | 3444 MB (-38%) | 290 |
+| `--aggressive` em imagem `aosp_atd` | 1536 MB | 2502 MB (-55%) | 307 |
+
+iOS, iPhone 17, iOS 26.4, soma da arvore de processos do simulador:
+
+| como subiu | processos | memoria |
+|---|---|---|
+| sem devslim (`xcrun simctl boot`) | 279 | 4629 MB |
+| `devslim ios up` | 67 | 953 MB (-79%) |
 
 ## Instalacao
 
 Precisa de Node 25 ou mais novo. Nao ha `npm install` a rodar.
 
 ```
-cd tools/devslim
+git clone https://github.com/HeiCg/devslim.git
+cd devslim
 npm link                     # poe `devslim` no PATH
 # ou, sem npm:
 alias devslim="$PWD/bin/devslim"
@@ -627,6 +650,10 @@ node --test --test-concurrency=2
 Os testes usam AVDs, SDK e store iOS em diretorio temporario, com exec, spawn,
 relogio e sleep falsos. Nenhum chama adb, emulator, avdmanager ou simctl de
 verdade, nem escreve em `~/.android` ou `/private/var/tmp`.
+
+## Licenca
+
+MIT. Ver `LICENSE`.
 
 ## Licenca de terceiros
 
