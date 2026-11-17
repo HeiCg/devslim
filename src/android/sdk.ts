@@ -26,6 +26,14 @@ export function defaultFileExists(path: string): boolean {
   }
 }
 
+export function defaultDirExists(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // Raizes candidatas, nesta ordem: ANDROID_HOME, ANDROID_SDK_ROOT, ~/Library/Android/sdk.
 export function sdkCandidates(env: Env = process.env): string[] {
   const out: string[] = [];
@@ -40,6 +48,11 @@ export function sdkCandidates(env: Env = process.env): string[] {
 // Caminho do binario dentro de uma raiz de SDK (exista ou nao).
 export function sdkToolPath(root: string, tool: SdkTool): string {
   return join(root, ...TOOL_PATH[tool]);
+}
+
+// Raiz do SDK a partir do caminho de um binario achado por findSdkTool.
+export function sdkRootOfTool(toolPath: string, tool: SdkTool): string {
+  return join(toolPath, ...TOOL_PATH[tool].map(() => '..'));
 }
 
 // Primeira raiz candidata que existe como diretorio, ou null. So leitura.

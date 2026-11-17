@@ -305,6 +305,7 @@ export const CAPABILITY_KEEPS: Readonly<Record<Capability, Readonly<{ categories
   Object.freeze({
     audio: Object.freeze({ categories: f<CategoryId>([]), labels: f<string>([]) }),
     camera: Object.freeze({ categories: f<CategoryId>(['photos']), labels: f<string>([]) }),
+    keyboard: Object.freeze({ categories: f<CategoryId>([]), labels: f<string>([]) }), // so Android (Gboard)
     location: Object.freeze({ categories: f<CategoryId>([]), labels: f(['com.apple.MapKit.SnapshotService']) }),
     push: Object.freeze({ categories: f<CategoryId>([]), labels: f(['com.apple.apsd']) }),
     store: Object.freeze({ categories: f<CategoryId>(['store', 'icloud']), labels: f<string>([]) }),

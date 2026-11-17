@@ -18,7 +18,6 @@ const REQUIRED_NEVER = [
   'com.android.systemui',
   'com.android.settings',
   'com.android.providers.settings',
-  'com.google.android.inputmethod.latin',
   'com.android.inputmethod.latin',
   'com.android.shell',
 ];
@@ -116,5 +115,28 @@ test('planRestore ignora pacote fora da lista gerida e deduplica', () => {
 
 test('tamanho da lista gerida por nivel', () => {
   assert.equal(managedPackages('standard').length, 65);
-  assert.equal(managedPackages('aggressive').length, 69);
+  assert.equal(managedPackages('aggressive').length, 70);
+});
+
+const GBOARD = 'com.google.android.inputmethod.latin';
+
+test('Gboard so na lista aggressive, nunca na standard; fora do NEVER_DISABLE', () => {
+  assert.ok(!managedPackages('standard').includes(GBOARD));
+  assert.ok(managedPackages('aggressive').includes(GBOARD));
+  assert.ok(!NEVER_DISABLE.includes(GBOARD));
+  assert.ok(NEVER_DISABLE.includes('com.android.inputmethod.latin'), 'teclado AOSP continua protegido');
+  const cat = BLOAT_CATEGORIES.find((c) => c.packages.includes(GBOARD));
+  assert.equal(cat?.level, 'aggressive');
+});
+
+test('capacidade keyboard mantem o Gboard; sem ele instalado, nada muda', () => {
+  const installed = [GBOARD, PLAY_STORE];
+  assert.deepEqual(planDisable({ installed, level: 'standard' }), []);
+  assert.deepEqual(planDisable({ installed, level: 'aggressive' }), [PLAY_STORE, GBOARD]);
+  assert.deepEqual(planDisable({ installed, level: 'aggressive', capabilities: ['keyboard'] }), [PLAY_STORE]);
+  assert.deepEqual(planDisable({ installed: [PLAY_STORE], level: 'aggressive' }), [PLAY_STORE], 'imagem sem Gboard: pulado');
+});
+
+test('planRestore religa o Gboard desligado por bake aggressive', () => {
+  assert.deepEqual(planRestore([PLAY_STORE, GBOARD]), [PLAY_STORE, GBOARD]);
 });

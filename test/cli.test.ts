@@ -220,6 +220,141 @@ test('cli up e bake aceitam --grpc: religa sobre o state salvo com grpc false', 
   assert.ok(!c.fake.spawnCalls[0].args.includes('-grpc'), 'sem flag: herda grpc false');
 });
 
+// ---------------------------------------------------------------------------
+// --lowram / --no-lowram
+
+const lowramState = () => JSON.parse(readFileSync(join(devslimHome, 'state', 'android', 'fake-api35.json'), 'utf8')).profile;
+
+test('--lowram liga -lowram sem mexer na RAM; tune salva; plan herda; --no-lowram sobrepoe', () => {
+  const p = run(['android', 'plan', 'fake-api35', '--lowram']);
+  assert.equal(p.code, 0, p.stderr);
+  assert.match(p.stdout, /^perfil: ram 2048 MB \(lowram\), /m);
+  assert.match(p.stdout, /emulator -avd fake-api35 -gpu host -memory 2048 .* -lowram -no-boot-anim/);
+  assert.equal(JSON.parse(run(['android', 'plan', 'fake-api35', '--lowram', '--json']).stdout).profile.lowRam, true);
+
+  assert.equal(run(['android', 'tune', 'fake-api35', '--lowram']).code, 0);
+  assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [2048, true]);
+  assert.match(readFileSync(configPath, 'utf8'), /^hw\.ramSize=2048$/m);
+
+  const inherited = run(['android', 'plan', 'fake-api35']);
+  assert.match(inherited.stdout, /^perfil herdado do tune anterior$/m);
+  assert.match(inherited.stdout, / -lowram /, 'sem flag herda o lowram salvo');
+  const off = run(['android', 'plan', 'fake-api35', '--no-lowram']);
+  assert.doesNotMatch(off.stdout, /^ {2}emulator .* -lowram /m);
+  assert.match(off.stdout, /-memory 2048 /);
+
+  // --ram depois de --lowram mantem o lowram herdado
+  assert.equal(run(['android', 'tune', 'fake-api35', '--ram', '3072']).code, 0);
+  assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [3072, true]);
+  assert.equal(run(['android', 'tune', 'fake-api35', '--no-lowram']).code, 0);
+  assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [3072, false]);
+});
+
+test('--aggressive continua 1536 + lowram; --no-lowram junto tira so o lowram', () => {
+  assert.equal(run(['android', 'tune', 'fake-api35', '--aggressive']).code, 0);
+  assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [1536, true]);
+  assert.equal(run(['android', 'tune', 'fake-api35', '--aggressive', '--no-lowram']).code, 0);
+  assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [1536, false]);
+  assert.equal(run(['android', 'tune', 'fake-api35', '--aggressive']).code, 0, '--aggressive religa o lowram sobre o salvo');
+  assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [1536, true]);
+});
+
+test('--lowram com --no-lowram = erro de uso em plan, tune, up e bake; nada escrito', () => {
+  const before = tree(avdDir);
+  for (const sub of ['plan', 'tune', 'up', 'bake']) {
+    const r = run(['android', sub, 'fake-api35', '--lowram', '--no-lowram']);
+    assert.equal(r.code, 2, `${sub}: ${r.stderr}`);
+    assert.equal(r.stderr.split('\n')[0], 'devslim: --lowram e --no-lowram nao combinam; use so um', sub);
+  }
+  assert.deepEqual(tree(avdDir), before);
+  assert.ok(!existsSync(join(devslimHome, 'state')));
+});
+
+test('cli up e bake aceitam --lowram/--no-lowram; bake --aggressive segue sendo so a lista de bloat', async () => {
+  assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
+  const a = inProcess();
+  const up = await a.call(['android', 'up', 'fake-api35', '--lowram']);
+  assert.equal(up.code, 0, up.stderr);
+  assert.ok(a.fake.spawnCalls[0].args.includes('-lowram'));
+  assert.equal(a.fake.spawnCalls[0].args[a.fake.spawnCalls[0].args.indexOf('-memory') + 1], '2048');
+
+  const b = inProcess();
+  const bake = await b.call(['android', 'bake', 'fake-api35', '--aggressive', '--lowram', '--force']);
+  assert.equal(bake.code, 0, bake.stderr);
+  assert.match(bake.stdout, /\(nivel aggressive\)/);
+  assert.match(bake.stdout, /-memory 2048 .*-lowram/);
+
+  assert.equal(run(['android', 'tune', 'fake-api35', '--lowram']).code, 0);
+  const c = inProcess();
+  const plain = await c.call(['android', 'bake', 'fake-api35', '--no-lowram', '--force']);
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.ok(!c.fake.spawnCalls[0].args.includes('-lowram'), '--no-lowram sobrepoe o salvo');
+  const d = inProcess();
+  await d.call(['android', 'bake', 'fake-api35', '--aggressive', '--force']);
+  assert.ok(d.fake.spawnCalls[0].args.includes('-lowram'), 'sem flag herda o lowram salvo');
+});
+
+// Nota do plan/tune: RAM abaixo de 2560 sem lowram deve ser elevada pelo emulador.
+const NOTE_RE = /^nota: /m;
+
+test('plan/tune: nota de piso so abaixo de 2560 MB sem lowram', () => {
+  const p = run(['android', 'plan', 'fake-api35']);
+  assert.match(p.stdout, /^nota: o emulador deve elevar a RAM pedida de 2048 MB \(pisos observados: 2560 MB em phone, 4096 MB em tablet 2560x1600\); --lowram faz o pedido valer/m);
+  assert.equal(p.stdout.match(/^nota: .*$/gm)?.length, 1, 'uma linha so');
+  assert.match(JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout).ramNote, /2048 MB/);
+  assert.match(run(['android', 'plan', 'fake-api35', '--aggressive', '--no-lowram']).stdout, /^nota: .*1536 MB/m);
+
+  for (const flags of [['--lowram'], ['--aggressive'], ['--ram', '2560'], ['--ram', '4096']]) {
+    const r = run(['android', 'plan', 'fake-api35', ...flags]);
+    assert.doesNotMatch(r.stdout, NOTE_RE, flags.join(' '));
+    assert.equal(JSON.parse(run(['android', 'plan', 'fake-api35', ...flags, '--json']).stdout).ramNote, null, flags.join(' '));
+  }
+  const t = run(['android', 'tune', 'fake-api35']);
+  assert.match(t.stdout, NOTE_RE);
+  assert.doesNotMatch(run(['android', 'tune', 'fake-api35', '--lowram']).stdout, NOTE_RE);
+});
+
+test('plan/tune: nota usa a RAM efetiva do ultimo boot (hardware-qemu.ini) quando ha', () => {
+  assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
+  writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 4096\nhw.gpu.mode = host\n');
+  const p = run(['android', 'plan', 'fake-api35']);
+  assert.match(p.stdout, /^nota: no ultimo boot deste AVD o emulador elevou 2048 MB para 4096 MB; o pedido de 2048 MB deve subir de novo; --lowram faz o pedido valer/m);
+  assert.doesNotMatch(p.stdout, /pisos observados/);
+  const t = run(['android', 'tune', 'fake-api35', '--json']);
+  assert.match(JSON.parse(t.stdout).ramNote, /elevou 2048 MB para 4096 MB/);
+
+  // ultimo boot sem elevacao (efetiva = pedida): cai na nota generica
+  writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 2048\n');
+  assert.match(run(['android', 'plan', 'fake-api35']).stdout, /^nota: .*pisos observados/m);
+});
+
+test('help lista --lowram e --no-lowram', () => {
+  const h = run(['--help']).stdout;
+  assert.match(h, /^ {2}--lowram {5,}/m);
+  assert.match(h, /^ {2}--no-lowram {2,}/m);
+  assert.match(h, /--aggressive +RAM 1536 \+ -lowram/);
+});
+
+test('help: --need lista keyboard; bake --aggressive cita o Gboard', () => {
+  const h = run(['--help']).stdout;
+  assert.match(h, /--need a,b +capacidades: audio, camera, keyboard, location, push, store, weblogin, window;/);
+  assert.match(h, /keyboard mantem o Gboard no bake --aggressive/);
+  assert.match(h, /--aggressive +bake: desliga tambem a lista aggressive \(Play Store, assistentes de setup, Gboard\)/);
+});
+
+test('cli bake --aggressive: Gboard desligado; --need keyboard mantem', async () => {
+  const GBOARD = 'com.google.android.inputmethod.latin';
+  assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
+  const a = inProcess({ spawned: { installed: [GBOARD, 'com.android.vending'] } });
+  assert.equal((await a.call(['android', 'bake', 'fake-api35', '--aggressive'])).code, 0);
+  const st = () => JSON.parse(readFileSync(join(devslimHome, 'state', 'android', 'fake-api35.json'), 'utf8'));
+  assert.deepEqual(st().disabledPackages, ['com.android.vending', GBOARD]);
+  const b = inProcess({ spawned: { installed: [GBOARD, 'com.android.vending'] } });
+  assert.equal((await b.call(['android', 'bake', 'fake-api35', '--aggressive', '--need', 'keyboard', '--force'])).code, 0);
+  assert.deepEqual(st().disabledPackages, ['com.android.vending']);
+  assert.deepEqual(st().profile.capabilities, [], 'bake nao grava capacidades no perfil do tune');
+});
+
 test('help lista --grpc', () => {
   const r = run(['--help']);
   assert.match(r.stdout, /^ {2}--grpc {7,}/m);
@@ -409,7 +544,17 @@ function inProcess(opts: FakeAndroidOptions = {}) {
       stderr: (t) => { stderr += t; },
       env,
       cwd: root,
-      runtime: { exec: fake.exec, spawnDetached: fake.spawnDetached, sleep: fake.sleep, now: fake.now, date: fake.date, fileExists: fake.fileExists, pidAlive: () => true },
+      runtime: {
+        exec: fake.exec,
+        spawnDetached: fake.spawnDetached,
+        sleep: fake.sleep,
+        now: fake.now,
+        date: fake.date,
+        fileExists: fake.fileExists,
+        dirExists: fake.dirExists,
+        arch: fake.arch,
+        pidAlive: () => true,
+      },
     });
     return { code, stdout, stderr };
   };
@@ -613,6 +758,34 @@ test('cli create: recusa existente; cria com tela 720x1600@320', async () => {
   assert.match(r.stdout, /AVD novo-api35 criado \(system-images;android-35;google_apis;arm64-v8a, pixel_6\); nao bootado/);
   assert.match(readFileSync(join(avdHome, 'novo-api35.avd', 'config.ini'), 'utf8'), /^hw\.lcd\.width=720$/m);
   assert.equal(fake.exec.calls[0].opts.input, 'no\n');
+});
+
+test('cli create --image atalho e --api; imagem ausente = sdkmanager na mensagem; --api com id completo = uso', async () => {
+  const { call } = inProcess({ systemImages: ['system-images;android-34;aosp_atd;arm64-v8a'] });
+  const r = await call(['android', 'create', 'atd-api34', '--image', 'aosp_atd', '--api', '34', '--json']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(JSON.parse(r.stdout).image, 'system-images;android-34;aosp_atd;arm64-v8a');
+
+  const miss = await call(['android', 'create', 'gatd', '--image', 'google_atd']);
+  assert.equal(miss.code, 1);
+  assert.equal(miss.stderr.trimEnd().split('\n').length, 1);
+  assert.match(miss.stderr, /sdkmanager "system-images;android-35;google_atd;arm64-v8a"/);
+
+  const bad = await call(['android', 'create', 'x', '--image', 'system-images;android-34;aosp_atd;arm64-v8a', '--api', '34']);
+  assert.equal(bad.code, 2);
+  assert.match(bad.stderr, /^devslim: --api so vale com atalho de imagem/m);
+  assert.equal((await call(['android', 'create', 'x', '--image', 'aosp_atd', '--api', 'abc'])).code, 2);
+  const unknown = await call(['android', 'create', 'x', '--image', 'playstore']);
+  assert.equal(unknown.code, 1);
+  assert.match(unknown.stderr, /imagem desconhecida: playstore/);
+});
+
+test('help: create lista --api, os atalhos de imagem e o trade-off dos ATD', () => {
+  const h = run(['--help']).stdout;
+  assert.match(h, /devslim android create <nome> \[--image I\] \[--api N\] \[--device D\]/);
+  assert.match(h, /^ {2}--api N {6,}/m);
+  assert.match(h, /google_apis, google_atd, aosp_atd, default/);
+  assert.match(h, /aosp_atd: sem login Google, push FCM nem compra Play Billing/);
 });
 
 // ---------------------------------------------------------------------------

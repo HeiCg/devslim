@@ -210,3 +210,30 @@ test('re-bake com capacidade nova religa o que saiu do plano', async () => {
   assert.ok(!second.disabledPackages.includes('com.android.camera2'));
   assert.ok(!emu.disabled.has('com.android.camera2'));
 });
+
+test('Gboard: bake standard nao toca; aggressive desliga; re-bake com keyboard religa; unslim devolve', async () => {
+  const GBOARD = 'com.google.android.inputmethod.latin';
+  const { adb, emu } = world({ installed: [...INSTALLED, GBOARD] });
+  const std = await slimRunningDevice(SERIAL, { adb, level: 'standard' });
+  assert.ok(!std.plannedPackages.includes(GBOARD));
+  assert.ok(!emu.disabled.has(GBOARD));
+
+  const agg = await slimRunningDevice(SERIAL, { adb, level: 'aggressive', prior: { disabledPackages: std.disabledPackages, settings: std.savedSettings } });
+  assert.ok(agg.disabledPackages.includes(GBOARD));
+  assert.ok(emu.disabled.has(GBOARD));
+
+  const kept = await slimRunningDevice(SERIAL, {
+    adb,
+    level: 'aggressive',
+    capabilities: ['keyboard'],
+    prior: { disabledPackages: agg.disabledPackages, settings: agg.savedSettings },
+  });
+  assert.deepEqual(kept.reenabled, [GBOARD]);
+  assert.ok(!emu.disabled.has(GBOARD));
+
+  // unslim com o state do bake aggressive religa o Gboard
+  emu.disabled.add(GBOARD);
+  const un = await unslimRunningDevice(SERIAL, { adb, saved: { disabledPackages: agg.disabledPackages, settings: [] } });
+  assert.ok(un.enabled.includes(GBOARD));
+  assert.ok(!emu.disabled.has(GBOARD));
+});

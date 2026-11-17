@@ -134,7 +134,7 @@ test('ordem e ids: todas as checagens aparecem, ambiente limpo = so ok, exit 0',
   const checks = await runDoctor(ctx);
   const ids = [...new Set(checks.map((c) => c.id))];
   assert.deepEqual(ids, [
-    'node', 'xcode', 'android-sdk', 'emulator-version', 'avd-gpu', 'avd-ram', 'profile-drift', 'running-off-profile', 'emulator-advertised', 'argent-gpu',
+    'node', 'xcode', 'android-sdk', 'emulator-version', 'avd-gpu', 'avd-ram', 'profile-drift', 'avd-image', 'running-off-profile', 'emulator-advertised', 'argent-gpu',
     'default-boot-snapshot', 'orphan-images', 'swap', 'ios-always-enabled', 'stale-session',
   ]);
   assert.deepEqual(checks.filter((c) => c.level !== 'ok'), []);
@@ -214,8 +214,10 @@ test('avd-ram: runtime acima do config.ini ou acima de 3072 = warn; igual = ok',
   assert.match(by.piso.message, /2560 MB.*2048 MB/);
   assert.match(by.piso.message, /acima dos 2048 MB do config\.ini \(emulador elevou\)/);
   assert.doesNotMatch(by.piso.message, /piso aplicado/);
+  assert.match(by.piso.fix, /^devslim android tune piso --lowram \(com o AVD desligado; o emulador ignora -memory abaixo do piso dele sem lowram; o lowram muda o comportamento dos apps: o guest se declara aparelho de pouca RAM\)$/);
   assert.equal(by.grande.level, 'warn');
   assert.match(by.grande.message, /3072/);
+  assert.match(by.grande.fix, /^devslim android tune grande \(e suba com devslim android up, que passa -memory\)$/, 'sem elevacao: o fix de sempre');
   assert.equal(by.certo.level, 'ok');
 });
 
@@ -602,4 +604,80 @@ test('profile-drift: AVD com state mas ausente, ou config.ini ilegivel, e pulado
   assert.equal(c[0].message, 'bench-api35: config.ini difere do perfil salvo em 1 chave(s): hw.gps: atual=no esperado=yes');
   assert.equal(c[0].fix, 'devslim android tune bench-api35 --need none (o config.ini atual dispensa location)\nou devslim android tune bench-api35 para voltar ao perfil salvo');
   assert.equal(doctorExitCode(await runDoctor(ctx)), 0);
+});
+
+// ---------------------------------------------------------------------------
+// avd-image: tag da system image x capacidades que exigem servicos Google
+
+const ATD = (tag: string, api = 35) => ({ 'tag.id': tag, 'tag.ids': tag, 'image.sysdir.1': `system-images/android-${api}/${tag}/arm64-v8a/` });
+
+test('avd-image: sem state = ok', async () => {
+  assert.deepEqual(only(await runDoctor(setup().ctx), 'avd-image').map((c) => [c.level, c.message]), [['ok', 'nenhum AVD com state do devslim']]);
+});
+
+test('avd-image: google_apis sem push/weblogin/store = nota nao bloqueante sugerindo ATD com o numero medido', async () => {
+  const { ctx, env } = setup();
+  const { dir } = tunedAvd('bench-api35', env, { capabilities: ['camera', 'keyboard'] });
+  const before = readFileSync(join(dir, 'config.ini'), 'utf8');
+  const c = only(await runDoctor(ctx), 'avd-image');
+  assert.deepEqual(c.map((x) => x.level), ['ok']);
+  assert.match(c[0].message, /^bench-api35: imagem google_apis \(servicos Google completos\) e o perfil nao pede push, weblogin nem store; /);
+  assert.match(c[0].message, /3660 MB contra 4343 MB de phys_footprint no host, 2 min parado, uma medicao/);
+  assert.equal(c[0].fix, 'devslim android create bench-api35-atd --image aosp_atd');
+  assert.equal(readFileSync(join(dir, 'config.ini'), 'utf8'), before, 'so leitura');
+  assert.equal(doctorExitCode(await runDoctor(ctx)), 0);
+});
+
+test('avd-image: playstore e API diferente de 35 = nota com --api', async () => {
+  const { ctx, env } = setup();
+  const { dir } = tunedAvd('loja-api34', env);
+  editIni(dir, ATD('google_apis_playstore', 34));
+  const c = only(await runDoctor(ctx), 'avd-image');
+  assert.deepEqual(c.map((x) => x.level), ['ok']);
+  assert.equal(c[0].fix, 'devslim android create loja-api34-atd --image aosp_atd --api 34');
+});
+
+test('avd-image: ATD ou default com push/weblogin/store = warn dizendo que nao funciona', async () => {
+  const { ctx, env } = setup();
+  const a = tunedAvd('atd-api35', env, { capabilities: ['push', 'weblogin'] });
+  editIni(a.dir, ATD('aosp_atd'));
+  const d = tunedAvd('def-api35', env, { capabilities: ['store'] });
+  editIni(d.dir, ATD('default'));
+  const g = tunedAvd('gatd-api35', env, { capabilities: ['push'] });
+  editIni(g.dir, ATD('google_atd'));
+  const c = only(await runDoctor(ctx), 'avd-image');
+  const by = Object.fromEntries(c.map((x) => [x.message.split(':')[0], x]));
+  assert.deepEqual(c.map((x) => x.level), ['warn', 'warn', 'warn']);
+  assert.match(by['atd-api35'].message, /imagem aosp_atd \(sem servicos Google\) e o perfil pede push,weblogin: nao funciona nessa imagem/);
+  assert.match(by['def-api35'].message, /imagem default \(sem servicos Google\) e o perfil pede store: nao funciona nessa imagem/);
+  assert.match(by['gatd-api35'].message, /imagem google_atd \(servicos Google reduzidos\) e o perfil pede push: pode nao funcionar nessa imagem/);
+  assert.equal(by['atd-api35'].fix, 'devslim android create atd-api35-gapis --image google_apis');
+  assert.equal(doctorExitCode(await runDoctor(ctx)), 0, 'warn nao derruba o exit');
+});
+
+test('avd-image: google_apis com capacidade Google e ATD sem ela = ok; tag so pelo image.sysdir.1 tambem vale', async () => {
+  const { ctx, env } = setup();
+  tunedAvd('login-api35', env, { capabilities: ['weblogin'] });
+  const a = tunedAvd('ui-api35', env, { capabilities: ['camera'] });
+  editIni(a.dir, ATD('aosp_atd'));
+  const b = tunedAvd('semtag-api35', env, { capabilities: ['push'] });
+  let doc = parseIni(readFileSync(join(b.dir, 'config.ini'), 'utf8'));
+  doc = setValue(doc, 'tag.id', '');
+  doc = setValue(doc, 'image.sysdir.1', 'system-images/android-35/google_apis/arm64-v8a/');
+  writeFileSync(join(b.dir, 'config.ini'), serializeIni(doc));
+  const c = only(await runDoctor(ctx), 'avd-image');
+  assert.deepEqual(c.map((x) => [x.level, x.message]), [['ok', '3 AVD(s) com imagem compativel com as capacidades do perfil']]);
+});
+
+test('avd-image: AVD ausente, config.ini ilegivel ou sem tag = pulado', async () => {
+  const { ctx, env } = setup();
+  recordAndroidTune('sumiu-api35', { avdDir: join(avdHome, 'sumiu-api35.avd'), originalConfigIni: 'x', originalConfigSha256: 'y', profile: buildAndroidProfile() }, { env });
+  const broken = makeAvd('quebrado-api35');
+  recordAndroidTune('quebrado-api35', { avdDir: broken, originalConfigIni: 'x', originalConfigSha256: 'y', profile: buildAndroidProfile() }, { env });
+  rmSync(join(broken, 'config.ini'));
+  mkdirSync(join(broken, 'config.ini'));
+  const notag = makeAvd('semtag-api35', { config: 'hw.ramSize=2048\n' });
+  recordAndroidTune('semtag-api35', { avdDir: notag, originalConfigIni: 'x', originalConfigSha256: 'y', profile: buildAndroidProfile() }, { env });
+  const c = only(await runDoctor(ctx), 'avd-image');
+  assert.deepEqual(c.map((x) => [x.level, x.message]), [['ok', '0 AVD(s) com imagem compativel com as capacidades do perfil; 3 pulado(s) (AVD ausente, config.ini ilegivel ou sem tag da imagem)']]);
 });

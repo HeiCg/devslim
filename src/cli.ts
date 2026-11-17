@@ -1,9 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import pkg from '../package.json' with { type: 'json' };
 import { resolveCapabilities } from './capabilities.ts';
 import { bytesToMb, sizeText } from './dirSize.ts';
 import { DevslimError, UsageError } from './errors.ts';
 import type { RuntimeContext } from './android/deps.ts';
+import { findAvd, type AvdInfo } from './android/avd.ts';
+import { getValue, parseIni } from './android/configIni.ts';
+import { lastBootRaise, parseRamMb, ramFloorNote } from './android/hardwareQemu.ts';
+import { IMAGE_SHORTCUTS } from './android/images.ts';
 import { buildAndroidProfile, formatScreen, type AndroidProfile, type AndroidProfileOptions } from './android/profile.ts';
 import { grpcPortFor, GRPC_REFERENCE_PORT } from './android/launchArgs.ts';
 import { bakeAvd, createAvd, downAvd, upAvd, type BakeResult } from './android/runtime.ts';
@@ -37,13 +42,15 @@ uso:
 
   devslim android plan <avd> [flags]     mostra mudancas do config.ini e a linha do emulator (nao escreve)
   devslim android tune <avd> [flags]     salva state, reescreve config.ini, apaga hardware-qemu.ini e snapshots/
-  devslim android create <nome> [--image I] [--device D]
-                                         cria AVD (avdmanager) e aplica tune com tela 720x1600@320; nao boota
+  devslim android create <nome> [--image I] [--api N] [--device D]
+                                         cria AVD (avdmanager) e aplica tune com tela 720x1600@320; nao boota;
+                                         a system image tem que estar instalada (senao mostra o sdkmanager)
   devslim android up <avd> [flags] [--force]
                                          boota do snapshot slim_base (se houver) com flags economicas; avisa se o
                                          emulador elevou a RAM pedida, se o AVD ja roda fora do perfil (argent,
                                          GPU por software) e sugere bake quando nao ha slim_base
-  devslim android bake <avd> [--aggressive] [--need a,b] [--for <dir>] [--no-grpc|--grpc] [--force]
+  devslim android bake <avd> [--aggressive] [--need a,b] [--for <dir>] [--no-grpc|--grpc]
+                         [--lowram|--no-lowram] [--force]
                                          boota sem snapshot, enxuga via adb, grava snapshot slim_base e desliga
   devslim android down [<avd>] [--force] desliga o que o devslim subiu (--force: qualquer emulador)
   devslim android restore <avd> [--config-only]
@@ -63,8 +70,12 @@ uso:
   devslim --help | --version
 
 flags de plan/tune/up (herdam o perfil do tune; flags sobrepoem):
-  --ram N          RAM em MB (1536..8192, padrao 2048)
+  --ram N          RAM em MB (1536..8192, padrao 2048); abaixo do piso do emulador (visto: 2560 MB
+                   em phone, 4096 MB em tablet) ele eleva o pedido sem erro, salvo com --lowram
   --aggressive     RAM 1536 + -lowram
+  --lowram         passa -lowram sem mudar a RAM: o -memory pedido passa a valer, mas o guest se
+                   declara aparelho de pouca RAM (muda o comportamento dos apps); tambem vale no bake
+  --no-lowram      tira o lowram salvo pelo tune ou o do --aggressive; nao combina com --lowram
   --gpu M          modo de GPU (padrao host)
   --vulkan         religa Vulkan no guest (sem -feature -Vulkan)
   --screen S       keep (padrao) ou LxA@dpi, ex. 720x1600@320
@@ -73,8 +84,10 @@ flags de plan/tune/up (herdam o perfil do tune; flags sobrepoem):
                    que o argent usa para screenshot/tap); tambem vale no bake
   --grpc           religa o gRPC quando o tune salvou --no-grpc (sobrepoe o perfil salvo);
                    tambem vale no bake; nao combina com --no-grpc
-  --need a,b       capacidades: audio, camera, location, push, store, weblogin, window;
-                   substitui as do tune; --need none limpa
+  --need a,b       capacidades: audio, camera, keyboard, location, push, store, weblogin, window;
+                   substitui as do tune; --need none limpa; keyboard mantem o Gboard no bake --aggressive
+                   (sem ele o texto chega por adb/argent input, mas nao da para testar layout que desvia
+                   do teclado); keyboard, store e window nunca saem do --for
   --for <dir>      deriva capacidades do package.json do app (tambem substitui as do tune)
   --reset          plan/tune: ignora o perfil salvo e parte do padrao
   --json           saida em JSON
@@ -82,13 +95,19 @@ flags de plan/tune/up (herdam o perfil do tune; flags sobrepoem):
 outras flags:
   --force          up/bake/ios up: ignora a guarda de um device por vez e a recusa por swap acima de 95%;
                    down: mata o que nao foi subido pelo devslim
-  --aggressive     bake: desliga tambem a lista aggressive (Play Store, assistentes de setup)
+  --aggressive     bake: desliga tambem a lista aggressive (Play Store, assistentes de setup, Gboard)
   --config-only    restore: so o config.ini; pacotes/settings do guest ficam pendentes no state
-  --image I        create: padrao system-images;android-35;google_apis;arm64-v8a
+  --image I        create: atalho google_apis, google_atd, aosp_atd, default (vira
+                   system-images;android-<api>;<tag>;<abi>, ABI do host) ou o id completo; padrao google_apis
+                   ATD = sem servicos Google (aosp_atd) ou com servicos reduzidos (google_atd): mais leve;
+                   aosp_atd: sem login Google, push FCM nem compra Play Billing. ATD para teste de UI e
+                   logica; google_apis quando o teste precisa de login, push ou compra
+  --api N          create: API do atalho de imagem (padrao 35); nao combina com id completo
   --device D       create: padrao pixel_7
 
 flags ios (plan/up):
-  --need a,b       capacidades (push, store, weblogin, camera, location religam labels; window abre o Simulator.app)
+  --need a,b       capacidades (push, store, weblogin, camera, location religam labels; window abre o Simulator.app;
+                   audio e keyboard nao mudam nada no iOS)
   --for <dir>      deriva capacidades do package.json do app
   --except c,c     mantem categorias inteiras ligadas (ver ios categories)
   --keep l,l       mantem labels avulsos ligados
@@ -113,15 +132,27 @@ const PROFILE_FLAGS: FlagSpec = Object.freeze({
   for: 'value',
   'no-grpc': 'bool',
   grpc: 'bool',
+  lowram: 'bool',
+  'no-lowram': 'bool',
   json: 'bool',
 });
 const TUNE_FLAGS: FlagSpec = Object.freeze({ ...PROFILE_FLAGS, reset: 'bool' });
 const RESTORE_FLAGS: FlagSpec = Object.freeze({ json: 'bool', 'config-only': 'bool' });
 const UP_FLAGS: FlagSpec = Object.freeze({ ...PROFILE_FLAGS, force: 'bool' });
-const BAKE_FLAGS: FlagSpec = Object.freeze({ aggressive: 'bool', need: 'multi', for: 'value', 'no-grpc': 'bool', grpc: 'bool', force: 'bool', json: 'bool' });
+const BAKE_FLAGS: FlagSpec = Object.freeze({
+  aggressive: 'bool',
+  need: 'multi',
+  for: 'value',
+  'no-grpc': 'bool',
+  grpc: 'bool',
+  lowram: 'bool',
+  'no-lowram': 'bool',
+  force: 'bool',
+  json: 'bool',
+});
 const DOWN_FLAGS: FlagSpec = Object.freeze({ force: 'bool', json: 'bool' });
 const MEASURE_FLAGS: FlagSpec = Object.freeze({ json: 'bool' });
-const CREATE_FLAGS: FlagSpec = Object.freeze({ image: 'value', device: 'value', json: 'bool' });
+const CREATE_FLAGS: FlagSpec = Object.freeze({ image: 'value', api: 'value', device: 'value', json: 'bool' });
 
 function parseFlags(args: readonly string[], spec: FlagSpec): Parsed {
   const out: Parsed = { positionals: [], values: {}, multi: {}, bools: new Set() };
@@ -180,9 +211,11 @@ type ResolvedProfile = { profile: AndroidProfile; inherited: boolean };
 // Caminho unico do perfil de plan/tune/up/bake: o do tune (state) como base e
 // as flags dadas sobrepoem; sem state (ou com --reset), parte do padrao.
 // --need e --for SUBSTITUEM as capacidades salvas (nao unem). --grpc e
-// --no-grpc sobrepoem o grpc salvo (o tune --no-grpc grava false).
+// --no-grpc sobrepoem o grpc salvo (o tune --no-grpc grava false). --lowram e
+// --no-lowram sobrepoem o lowram salvo e vencem o lowram do --aggressive.
 function resolveProfile(p: Parsed, io: CliIo, avd: string): ResolvedProfile {
   if (p.bools.has('grpc') && p.bools.has('no-grpc')) throw new UsageError('--grpc e --no-grpc nao combinam; use so um');
+  if (p.bools.has('lowram') && p.bools.has('no-lowram')) throw new UsageError('--lowram e --no-lowram nao combinam; use so um');
   const state = p.bools.has('reset') ? null : loadState<AndroidState>('android', avd, { env: io.env });
   const base = state?.profile;
   const opts: AndroidProfileOptions =
@@ -190,7 +223,7 @@ function resolveProfile(p: Parsed, io: CliIo, avd: string): ResolvedProfile {
       ? {}
       : {
           ramMb: base.ramMb,
-          aggressive: base.lowRam,
+          lowRam: base.lowRam,
           gpu: base.gpu,
           vulkan: base.vulkan,
           screen: formatScreen(base.screen),
@@ -201,7 +234,10 @@ function resolveProfile(p: Parsed, io: CliIo, avd: string): ResolvedProfile {
   if (p.bools.has('aggressive')) {
     opts.aggressive = true;
     opts.ramMb = undefined; // --aggressive sem --ram = 1536
+    opts.lowRam = undefined; // e lowram, salvo --no-lowram
   }
+  if (p.bools.has('lowram')) opts.lowRam = true;
+  if (p.bools.has('no-lowram')) opts.lowRam = false;
   if (p.values.ram !== undefined) opts.ramMb = intFlag('ram', p.values.ram);
   if (p.values.gpu !== undefined) opts.gpu = p.values.gpu;
   if (p.bools.has('vulkan')) opts.vulkan = true;
@@ -246,6 +282,25 @@ function planText(plan: TunePlan, inherited = false): string[] {
   return lines;
 }
 
+// Nota de piso de RAM do plan/tune. Pedido do ultimo boot como no status: o
+// -memory do perfil salvo; sem state, o hw.ramSize do config.ini.
+function ramNoteFor(avd: AvdInfo, profile: AndroidProfile, io: CliIo): string | null {
+  let requested: number | null = null;
+  try {
+    requested = loadState<AndroidState>('android', avd.name, { env: io.env })?.profile?.ramMb ?? null;
+  } catch {
+    requested = null; // state ilegivel: resolveProfile ja teria reclamado se precisasse dele
+  }
+  if (requested === null) {
+    try {
+      requested = parseRamMb(getValue(parseIni(readFileSync(avd.configPath, 'utf8')), 'hw.ramSize'));
+    } catch {
+      requested = null;
+    }
+  }
+  return ramFloorNote(profile, lastBootRaise(avd.dir, requested));
+}
+
 // "hardware-qemu.ini, snapshots (812.3 MB)": tamanho so de snapshots/.
 function removeList(names: readonly string[], plan: TunePlan): string {
   return names.map((n) => (n === 'snapshots' && plan.snapshotsSize !== null ? `${n} (${sizeText(plan.snapshotsSize)})` : n)).join(', ');
@@ -274,11 +329,13 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     const avd = oneAvd(p, sub);
     const { profile, inherited } = resolveProfile(p, io, avd);
     const plan = planTune(avd, profile, { env: io.env });
+    const ramNote = ramNoteFor(plan.avd, profile, io);
     if (p.bools.has('json')) {
-      json({ ...planJson(plan), inheritedProfile: inherited });
+      json({ ...planJson(plan), inheritedProfile: inherited, ramNote });
       return 0;
     }
     const lines = planText(plan, inherited);
+    if (ramNote !== null) lines.push(ramNote);
     if (plan.wouldRemove.length > 0) lines.push(`tune apagaria: ${removeList(plan.wouldRemove, plan)}`);
     if (plan.runningLocks.length > 0) lines.push(`aviso: AVD parece estar rodando (${plan.runningLocks.join(', ')}); tune recusaria`);
     out(lines);
@@ -289,11 +346,14 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     const p = parseFlags(rest, TUNE_FLAGS);
     const avd = oneAvd(p, sub);
     const { profile, inherited } = resolveProfile(p, io, avd);
+    // Antes do tune: ele apaga o hardware-qemu.ini do ultimo boot.
+    const ramNote = ramNoteFor(findAvd(avd, { env: io.env }), profile, io);
     const res = tuneAvd(avd, profile, { env: io.env });
     if (p.bools.has('json')) {
       json({
         ...planJson(res),
         inheritedProfile: inherited,
+        ramNote,
         wroteConfig: res.wroteConfig,
         removed: res.removed,
         preservedOriginal: res.preservedOriginal,
@@ -302,6 +362,7 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
       return 0;
     }
     const lines = planText(res, inherited);
+    if (ramNote !== null) lines.push(ramNote);
     lines.push(
       res.preservedOriginal
         ? `state: ${res.statePath} (backup do primeiro tune mantido)`
@@ -346,7 +407,11 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
   if (sub === 'create') {
     const p = parseFlags(rest, CREATE_FLAGS);
     const name = oneAvd(p, sub);
-    const res = await createAvd(name, { ...rtx(io), image: p.values.image, device: p.values.device });
+    const api = intFlag('api', p.values.api);
+    if (api !== undefined && p.values.image?.startsWith('system-images;')) {
+      throw new UsageError(`--api so vale com atalho de imagem (${IMAGE_SHORTCUTS.join(', ')}); o id completo ja traz a API`);
+    }
+    const res = await createAvd(name, { ...rtx(io), image: p.values.image, api, device: p.values.device });
     if (p.bools.has('json')) {
       json({ avd: res.avd, image: res.image, device: res.device, ...planJson(res.tune), statePath: res.tune.statePath });
       return 0;

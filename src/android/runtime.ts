@@ -6,6 +6,8 @@ import { portForSerial, serialForPort, type Adb, type AdbDevice } from './adb.ts
 import { avdHome, findAvd, listAvds, runningLocks, type AvdInfo } from './avd.ts';
 import { resolveRuntime, type Runtime, type RuntimeContext } from './deps.ts';
 import { buildLaunchArgs, SLIM_SNAPSHOT } from './launchArgs.ts';
+import { imageDir, resolveImage } from './images.ts';
+import { sdkRootOfTool } from './sdk.ts';
 import type { BloatLevel } from './packages.ts';
 import { buildAndroidProfile, PORT_MAX, PORT_MIN, type AndroidProfile } from './profile.ts';
 import {
@@ -150,17 +152,20 @@ export type UpResult = Readonly<{
   hint?: string; // so quando subiu sem slim_base: sugere o bake
 }>;
 
-// O emulador pode elevar o -memory pedido sem erro. Medido so em dois pontos
-// (1080x2400 -> 2560 MB, 2560x1600 -> 4096 MB, ambos com -memory 2048); a
-// sugestao de tela menor e so tentativa.
-export const FLOOR_SCREEN_TRY = '720x1600@320';
+// O emulador eleva sem erro qualquer -memory abaixo do piso dele, a menos que
+// o -lowram esteja ligado (medido 2026-11-17: 2560 MB em phone, 4096 MB em
+// tablet 2560x1600; tela menor nao baixa o piso). O lowram faz o pedido valer,
+// mas o guest passa a se declarar aparelho de pouca RAM.
+export function lowRamTuneHint(avd: string): string {
+  return `Com o AVD desligado: devslim android tune ${avd} --lowram (o lowram muda o comportamento dos apps: o guest se declara aparelho de pouca RAM)`;
+}
 
-export function ramFloorWarning(avd: string, requestedMb: number, effectiveMb: number, logLine: string | null = null): string {
-  return (
-    `devslim: aviso: RAM pedida ${requestedMb} MB, efetiva ${effectiveMb} MB (emulador elevou; -memory ${requestedMb} nao vence)` +
-    `${logLine === null ? '' : `; log: "${logLine}"`}. ` +
-    `Tentativa, sem garantia de baixar a RAM efetiva: tela menor, com o AVD desligado: devslim android tune ${avd} --screen ${FLOOR_SCREEN_TRY}\n`
-  );
+export function ramFloorWarning(avd: string, requestedMb: number, effectiveMb: number, logLine: string | null = null, lowRam = false): string {
+  const head =
+    `devslim: aviso: RAM pedida ${requestedMb} MB, efetiva ${effectiveMb} MB (emulador elevou${lowRam ? ' mesmo com lowram' : ''}; -memory ${requestedMb} nao vence)` +
+    `${logLine === null ? '' : `; log: "${logLine}"`}.`;
+  if (lowRam) return `${head}\n`;
+  return `${head} O emulador ignora -memory abaixo do piso dele a menos que o lowram esteja ligado. ${lowRamTuneHint(avd)}\n`;
 }
 
 // AVD ja rodando lancado por outro (argent, Studio) ou com GPU por software.
@@ -259,7 +264,7 @@ export async function upAvd(avdName: string, profile: AndroidProfile, opts: UpOp
   const logHit = ramIncreaseLineFromLog(l.logFile, l.logOffset);
   const ramEffectiveMb = hw?.ramMb ?? logHit?.mb ?? null;
   if (ramEffectiveMb !== null && ramEffectiveMb > profile.ramMb) {
-    rt.stderr(ramFloorWarning(avd.name, profile.ramMb, ramEffectiveMb, logHit?.line ?? null));
+    rt.stderr(ramFloorWarning(avd.name, profile.ramMb, ramEffectiveMb, logHit?.line ?? null, profile.lowRam));
   }
   const grpc = profile.grpc !== false;
   const ad = await findAdvertisement(rt, avd.name, l.port, grpc);
@@ -457,6 +462,7 @@ export async function downAvd(avdName: string | undefined, opts: RuntimeContext 
 // ---------------------------------------------------------------------------
 // create
 
+// Id do atalho padrao (google_apis) num host arm64; fora dele a ABI e x86_64.
 export const DEFAULT_IMAGE = 'system-images;android-35;google_apis;arm64-v8a';
 export const DEFAULT_DEVICE = 'pixel_7';
 export const CREATE_SCREEN = '720x1600@320';
@@ -464,9 +470,12 @@ export const CREATE_SCREEN = '720x1600@320';
 export type CreateResult = Readonly<{ avd: string; image: string; device: string; tune: TuneResult }>;
 
 // Cria o AVD (sem bootar) e aplica o tune padrao com tela 720x1600@320.
+// `image`: id completo ou atalho (google_apis, google_atd, aosp_atd, default)
+// expandido com `api` (padrao 35) e a ABI do host. A imagem tem que estar no
+// SDK; ausente = erro com o comando sdkmanager, nunca baixa sozinho.
 export async function createAvd(
   name: string,
-  o: RuntimeContext & { image?: string; device?: string } = {},
+  o: RuntimeContext & { image?: string; api?: number; device?: string } = {},
 ): Promise<CreateResult> {
   const rt = resolveRuntime(o);
   if (!NAME_RE.test(name)) throw new DevslimError(`nome de AVD invalido: ${name}`);
@@ -474,9 +483,13 @@ export async function createAvd(
   if (listAvds(rt.env).includes(name) || existsSync(join(home, `${name}.avd`))) {
     throw new DevslimError(`AVD ${name} ja existe em ${home}`);
   }
-  const image = o.image ?? DEFAULT_IMAGE;
+  const image = resolveImage(o.image, { api: o.api, arch: rt.arch });
   const device = o.device ?? DEFAULT_DEVICE;
   const avdmanager = rt.tool('avdmanager');
+  const dir = imageDir(sdkRootOfTool(avdmanager, 'avdmanager'), image);
+  if (!rt.dirExists(dir)) {
+    throw new DevslimError(`imagem ${image} nao instalada (falta ${dir}); instale com: sdkmanager "${image}" e rode o create de novo`);
+  }
   // Responde "no" ao "Do you wish to create a custom hardware profile?".
   const res = await rt.exec(avdmanager, ['create', 'avd', '-n', name, '-k', image, '-d', device], {
     input: 'no\n',

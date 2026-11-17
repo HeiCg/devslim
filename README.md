@@ -79,8 +79,9 @@ da linha de comando do qemu (`pgrep -fl qemu-system`, ou `ps -o command= -p
 | `android-sdk` | SDK localizado com `emulator`, `adb` e `avdmanager`; SDK ausente e warn, binario faltando e fail |
 | `emulator-version` | `Pkg.Revision` abaixo de 37.2.13 e warn, versao sem o fix de vazamento de memoria GLES do host |
 | `avd-gpu` | `hw.gpu.mode` do `hardware-qemu.ini` do ultimo boot em lavapipe, swiftshader, software ou guest |
-| `avd-ram` | RAM do ultimo boot acima do `config.ini` ou acima de 3072 MB |
+| `avd-ram` | RAM do ultimo boot acima do `config.ini` ou acima de 3072 MB; quando o emulador elevou, o fix e `tune <avd> --lowram` |
 | `profile-drift` | AVD com state do devslim cujo `config.ini` difere do que o perfil salvo produziria; warn lista cada chave como `chave: atual=X esperado=Y` |
+| `avd-image` | tag da system image (`tag.id`, senao `image.sysdir.1`) de cada AVD com state x capacidades que dependem de servicos Google (`push`, `weblogin`, `store`). `google_apis` ou playstore sem nenhuma delas: linha ok com a sugestao de ATD e o numero medido. ATD ou `default` com alguma delas: warn. AVD ausente, `config.ini` ilegivel ou sem tag: pulado |
 | `running-off-profile` | emulador rodando agora com GPU por software, ou AVD tunado lancado por outro que nao o devslim; fix em duas linhas (subir com `devslim android up` ou `ARGENT_EMULATOR_GPU_MODE=host`) |
 | `emulator-advertised` | emulador rodando sem entrada viva com `grpc.port` e `grpc.token` em `avd/running/`; o argent nao o enxerga para screenshot e tap. Entradas de pid morto viram uma linha ok com a contagem |
 | `argent-gpu` | argent no PATH sem `ARGENT_EMULATOR_GPU_MODE=host` |
@@ -89,6 +90,13 @@ da linha de comando do qemu (`pgrep -fl qemu-system`, ou `ps -o command= -p
 | `swap` | acima de 80% e warn, acima de 95% e fail (mesmos limites e mesma mensagem da recusa do `up`) |
 | `ios-always-enabled` | store de simulador que desliga assistantd, gamed ou sharingd |
 | `stale-session` | entradas mortas na sessao |
+
+`avd-image` so le. A nota de imagem mais leve sai como ok (nao conta como warn
+nem muda o exit) e traz o fix `devslim android create <avd>-atd --image
+aosp_atd`, com `--api N` quando a imagem atual nao e da API 35. O warn de ATD
+com `push`, `weblogin` ou `store` diz que a capacidade nao funciona nessa imagem
+(no `google_atd`, que tem servicos Google reduzidos, diz que pode nao funcionar)
+e sugere `create <avd>-gapis --image google_apis`.
 
 `profile-drift` compara, para cada AVD em `$DEVSLIM_HOME/state/android/`, o
 `config.ini` atual com o que o `tune` gravaria a partir do perfil salvo (as
@@ -119,7 +127,8 @@ sempre o mesmo campo. O texto mostra os tres.
 ## Fluxo Android
 
 ```
-devslim android create slim-api35        # AVD novo; aplica o tune com tela 720x1600@320, nao boota
+devslim android create slim-api35        # AVD novo (google_apis); aplica o tune com tela 720x1600@320, nao boota
+devslim android create ui-api35 --image aosp_atd   # ou: imagem ATD, mais leve, para teste de UI e logica
 devslim android tune slim-api35          # ou: tune num AVD existente (backup do config.ini antes)
 devslim android bake slim-api35          # uma vez: boota, enxuga via adb, grava slim_base, desliga
 devslim android up slim-api35            # dia a dia: sobe do slim_base com flags economicas
@@ -128,8 +137,8 @@ devslim android up slim-api35            # restore precisa do AVD rodando se hou
 devslim android restore slim-api35       # religa pacotes, devolve settings e o config.ini byte a byte
 ```
 
-O `tune` grava RAM (padrao 2048 MB), heap, 2 cores, `hw.gpu.mode=host`, sensores,
-GPS e cameras desligados, e apaga `hardware-qemu.ini` e `snapshots/`, que o
+O `tune` grava RAM (padrao 2048 MB; ver abaixo o piso do emulador), heap, 2
+cores, `hw.gpu.mode=host`, sensores, GPS e cameras desligados, e apaga `hardware-qemu.ini` e `snapshots/`, que o
 emulador regenera. `plan` e `tune` mostram o tamanho de `snapshots/` na linha
 `apagaria`/`removido` (e `snapshotsMb` no JSON). `plan`, `tune`, `up` e `bake`
 partem do perfil gravado pelo ultimo `tune`; flags dadas na linha sobrepoem so
@@ -141,18 +150,35 @@ herda, `plan` e `tune` mostram a linha `perfil herdado do tune anterior`
 (`inheritedProfile` no JSON). O backup do `config.ini` no state continua o do
 primeiro tune. O emulador sobe com `-gpu host -memory N -cores 2 -port N
 -grpc G -grpc-use-token -no-window -no-audio -camera-back none -camera-front
-none -feature -Vulkan -no-boot-anim -no-metrics`, com `G = 8554 + (N - 5554)`.
+none -feature -Vulkan -no-boot-anim -no-metrics`, com `G = 8554 + (N - 5554)`, e
+`-lowram` antes de `-no-boot-anim` quando o perfil tem lowram.
 Sem `--port`, o `plan` mostra a linha com `-grpc 8554` e o sufixo `(gRPC 8554
 de referencia; porta definida no up)`, porque o `up` escolhe a porta livre na
 hora.
 
-O emulador pode subir com mais RAM que o `-memory` pedido (ver "Numeros
-medidos"). Depois do boot, o `up` le o `hardware-qemu.ini` (ou, sem ele, a linha
+Piso de RAM. O emulador eleva sem erro qualquer `-memory` abaixo do piso dele,
+a menos que o `-lowram` esteja ligado (ver "Numeros medidos"). Pisos vistos ate
+agora: 2560 MB num phone pixel_7 e 4096 MB num tablet 2560x1600; sao duas
+observacoes, nao uma regra. Tela menor nao baixa o piso: com 720x1600@320 o
+emulador continuou em 2560 MB. `--ram 1536` sem lowram tambem virou 2560 MB.
+Com lowram o pedido vale (`--aggressive`, 1536 MB com lowram, ficou em 1536
+MB), mas o guest passa a se declarar aparelho de pouca RAM, o que muda o
+comportamento dos apps.
+
+Depois do boot, o `up` le o `hardware-qemu.ini` (ou, sem ele, a linha
 `Increasing RAM size to N MB` do log deste boot), devolve `ramEffectiveMb` e,
 se a efetiva passou da pedida, avisa em stderr com os dois valores, o rotulo
-`(emulador elevou)` e a linha do log deste boot quando ela existe. A sugestao
-do aviso, `tune --screen 720x1600@320`, e tentativa: so ha dois pontos
-medidos, nao uma regra.
+`(emulador elevou)`, a linha do log deste boot quando ela existe e a saida:
+`devslim android tune <avd> --lowram` com o AVD desligado, com o aviso de que o
+lowram muda o comportamento dos apps. Se o perfil ja tinha lowram, o aviso diz
+`emulador elevou mesmo com lowram` e nao sugere nada.
+
+`plan` e `tune` imprimem uma linha `nota:` (campo `ramNote` no JSON, `null`
+sem nota) quando o perfil pede menos de 2560 MB sem lowram: o emulador deve
+elevar o pedido, com os dois pisos observados, e `--lowram` faz o pedido valer.
+Se o ultimo boot deste AVD (o `hardware-qemu.ini`, lido antes do `tune` apaga-lo)
+mostra que o emulador elevou o pedido, a nota cita esse valor no lugar dos pisos
+genericos e some quando o pedido novo ja passa dele.
 
 Se o AVD ja esta rodando, o `up` nao sobe outro e devolve o existente, com
 `launcher` e `gpuEffective`. Quando quem lancou nao foi o devslim ou a GPU
@@ -167,14 +193,38 @@ mensagem do `doctor`; `--force` boota mesmo assim. Entre 80% e 95% so avisam.
 Device que ja estava rodando nunca e bloqueado por swap.
 
 Flags de perfil: `--ram N` (1536 a 8192), `--aggressive` (1536 MB e `-lowram`),
-`--gpu M`, `--vulkan`, `--screen keep|LxA@dpi`, `--port N`, `--need a,b`,
-`--for <dir>`, `--no-grpc` e `--grpc` (os dois tambem no `bake`). `devslim
-android plan <avd>` mostra o diff do `config.ini` e a linha do emulador sem
-escrever nada.
+`--lowram`, `--no-lowram`, `--gpu M`, `--vulkan`, `--screen keep|LxA@dpi`,
+`--port N`, `--need a,b`, `--for <dir>`, `--no-grpc` e `--grpc`. `--lowram`,
+`--no-lowram`, `--no-grpc` e `--grpc` tambem valem no `bake`. `devslim android
+plan <avd>` mostra o diff do `config.ini` e a linha do emulador sem escrever
+nada.
+
+`--lowram` liga `-lowram` sem mudar a RAM; o `tune` grava `lowRam: true` no
+perfil e os comandos seguintes herdam. `--no-lowram` tira o lowram salvo ou o
+do `--aggressive` (`--aggressive --no-lowram` = 1536 MB sem lowram). As duas
+juntas sao erro de uso. `--aggressive` continua sendo 1536 MB mais lowram em
+`plan`, `tune` e `up`; no `bake` ele e so o nivel da lista de bloat.
+
+`create` aceita em `--image` o id completo
+(`system-images;android-35;google_apis;arm64-v8a`) ou um atalho: `google_apis` (padrao), `google_atd`, `aosp_atd` ou `default`,
+expandido para `system-images;android-<api>;<tag>;<abi>`. `--api N` escolhe a
+API do atalho (padrao 35) e nao combina com id completo. A ABI segue o host:
+`arm64-v8a` no Apple Silicon, `x86_64` no resto. Antes de chamar o
+`avdmanager`, o `create` confere se a imagem existe em
+`<sdk>/system-images/android-<api>/<tag>/<abi>`; se nao existe, para com o
+comando exato `sdkmanager "<id>"`. O devslim nunca baixa imagem sozinho.
+
+Qual imagem usar. As imagens ATD nao tem servicos Google (`aosp_atd`) ou tem
+servicos reduzidos (`google_atd`); `default` e AOSP puro. Sao mais leves (ver
+"Numeros medidos"), mas no `aosp_atd` nao ha login com Google, push FCM nem
+compra com Play Billing. Use ATD para teste de UI e de logica, e `google_apis`
+quando o teste precisa de login, push ou compra. O `doctor` (`avd-image`)
+aponta os dois desencontros.
 
 O `bake` desliga pacotes da lista gerida que existem na imagem (`--aggressive`
-inclui Play Store e assistentes de setup), zera escalas de animacao, desliga
-`auto_sync` e a tela de stylus, roda dexopt e `am kill-all`, e grava o snapshot.
+inclui Play Store, assistentes de setup e o Gboard), zera escalas de animacao,
+desliga `auto_sync` e a tela de stylus, roda dexopt e `am kill-all`, e grava o
+snapshot.
 Nunca desliga bluetooth nem Chrome. O state fica em
 `~/.devslim/state/android/<avd>.json`.
 
@@ -209,6 +259,7 @@ alcancam esse reparo. `plan` mostra o que seria reparado em `repair`.
 |---|---|---|---|
 | `audio` | nada | `hw.audioOutput`, sem `-no-audio` | app com som |
 | `camera` | categoria `photos` | cameras emuladas | app com camera ou galeria |
+| `keyboard` | nada | `bake --aggressive` mantem o Gboard (`com.google.android.inputmethod.latin`) | testar layout que desvia do teclado na tela |
 | `location` | `com.apple.MapKit.SnapshotService` | `hw.gps=yes`; `bake` mantem o Google Maps (`com.google.android.apps.maps`) | app com mapa ou localizacao |
 | `push` | `com.apple.apsd` | nada | expo-notifications |
 | `store` | categorias `store` e `icloud` | AVD com Play Store separado | so ao testar compra |
@@ -218,8 +269,15 @@ alcancam esse reparo. `plan` mostra o que seria reparado em `repair`.
 `--for <dir>` le o `package.json` do app e deriva `audio`, `camera`, `location`,
 `push` e `weblogin`. `location` vem de `expo-location`,
 `react-native-geolocation-service`, `@react-native-community/geolocation`,
-`@rnmapbox/maps` ou `react-native-maps`. `store` e `window` so entram por
-`--need`.
+`@rnmapbox/maps` ou `react-native-maps`. `store`, `window` e `keyboard` so
+entram por `--need`.
+
+O Gboard so entra na lista `--aggressive`, nunca na padrao. Sem ele o texto
+continua chegando por `adb shell input` ou pelo input do argent, mas nao da
+para testar layout que desvia do teclado na tela; para isso use `--need
+keyboard`. Um `bake` com `keyboard` religa o Gboard desligado por um `bake`
+anterior, e o `restore` religa como qualquer pacote da lista. Imagem que nao
+tem o Gboard so pula o pacote, como qualquer outro da lista.
 
 No iOS, CoreLocation (`com.apple.locationd`) e GeoServices (`com.apple.geod`,
 tiles e geocoding do MapKit) nao estao na lista gerida e nunca sao desligados,
@@ -331,15 +389,59 @@ console.log(up.serial, m.host.footprintMb);
 
 ## Numeros medidos
 
-Uma medicao real ate agora (2026-11-16, bench-api35, pixel_7 1080x2400, API 35
-google_apis, tunado, SEM bake, app de mapa aberto, ~30 min de uso):
-phys_footprint 5582 MB, cabecalho do footprint 3000 MB, RSS 4034 MB, guest
-MemTotal 2473 MB, 288 processos no guest. Sem medicao de baseline no mesmo AVD,
-entao ainda nao ha numero de economia. O emulador elevou a RAM de 2048 para
-2560 MB.
+Medido em 2026-11-17 num Mac Apple Silicon, uma medicao por linha, 2 min
+parado depois do boot, sem app aberto.
 
-Tablet 2560x1600 com `-memory 2048`: emulador elevou para 4096 MB. Phone
-1080x2400: elevou para 2560 MB.
+Android, API 35 arm64, pixel_7:
+
+| perfil | RAM efetiva | phys_footprint do qemu no host | processos no guest |
+|---|---|---|---|
+| `google_apis` sem devslim, headless, `-gpu auto` (caiu em lavapipe) | 2560 MB | 5525 MB | 341 |
+| devslim padrao (pede 2048), tela original | 2560 MB | 4590 MB | 325 |
+| devslim padrao, tela 720x1600@320 | 2560 MB | 4343 MB | 313 |
+| devslim `--ram 1536`, sem lowram | 2560 MB (elevada) | 4469 MB | 311 |
+| devslim `--aggressive` (1536 e `-lowram`) | 1536 MB | 3444 MB | 290 |
+| devslim padrao em imagem `aosp_atd` | 2560 MB | 3660 MB | 262 |
+
+O que as linhas mostram:
+
+- O emulador eleva qualquer `-memory` abaixo do piso dele (2560 MB neste phone;
+  4096 MB visto num tablet 2560x1600), a menos que o `-lowram` esteja ligado.
+  `--ram 2048` e `--ram 1536` sozinhos nao valem.
+- Tela menor nao baixa o piso: a RAM efetiva ficou em 2560 MB.
+- Imagem sem servicos Google economiza mais ou menos o mesmo que o lowram.
+- No guest, o Google Play Services usou 391 MB de PSS e o Gboard
+  (`com.google.android.inputmethod.latin`) 81 MB.
+
+iOS, iPhone 17, iOS 26.4:
+
+| perfil | processos | memoria |
+|---|---|---|
+| sem devslim | 279 | 4629 MB |
+| devslim padrao (boot 3.4 s) | 67 | 953 MB |
+
+Ressalvas:
+
+- Uma medicao por linha, sem app aberto.
+- A base do Android rodou headless. A base do iOS foi o primeiro boot de um
+  simulador recem criado.
+- O `footprint` reporta dois numeros para o qemu: o cabecalho e o
+  `phys_footprint`. As tabelas usam o `phys_footprint`, que nesse processo
+  diverge do cabecalho; compare as linhas entre si em vez de ler os valores
+  absolutos.
+
+Uso real no iOS (2026-11-17, perfil enxuto, iOS 26.4, iPhone 17 e iPad Pro 13,
+build release de simulador com bundle embutido): boot em cerca de 6,6 s, app
+instalado, login, mapa, busca, rota e chamadas de API funcionaram. Efeito
+colateral visto: um alerta "Poor Internet Connection" no primeiro launch, uma
+vez; depois a rede funcionou. Ainda nao conferido: app Expo em dev build
+conectando no Metro.
+
+Medicao anterior, em outras condicoes (2026-11-16, bench-api35, pixel_7
+1080x2400, API 35 google_apis, tunado, sem bake, app de mapa aberto, ~30 min de
+uso): phys_footprint 5582 MB, cabecalho do footprint 3000 MB, RSS 4034 MB, guest
+MemTotal 2473 MB, 288 processos no guest; o emulador elevou a RAM de 2048 para
+2560 MB.
 
 ## Testes
 

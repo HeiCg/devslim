@@ -44,9 +44,12 @@ test('derivacao une, deduplica e ordena', () => {
   assert.deepEqual(deriveCapabilities(pkg), ['audio', 'camera', 'push', 'weblogin']);
 });
 
-test('store e window nunca sao derivados', () => {
+test('store, window e keyboard nunca sao derivados', () => {
   const pkg = {
     dependencies: {
+      'react-native-keyboard-controller': '*',
+      'react-native-keyboard-aware-scroll-view': '*',
+      keyboard: '*',
       'react-native-purchases': '*',
       'react-native-iap': '*',
       'expo-store-review': '*',
@@ -56,6 +59,11 @@ test('store e window nunca sao derivados', () => {
     },
   };
   assert.deepEqual(deriveCapabilities(pkg), []);
+});
+
+test('keyboard e capacidade valida (so por --need)', () => {
+  assert.ok(CAPABILITIES.includes('keyboard'));
+  assert.deepEqual(parseCapabilities('window,keyboard,audio'), ['audio', 'keyboard', 'window']);
 });
 
 test('package.json sem dependencias ou malformado nao quebra', () => {
@@ -74,7 +82,7 @@ test('capacidade invalida da erro com a lista valida', () => {
     assert.ok(err instanceof DevslimError);
     assert.match(err.message, /bluetooth/);
     for (const c of CAPABILITIES) assert.match(err.message, new RegExp(c));
-    assert.match(err.message, /validas: audio, camera, location, push, store, weblogin, window\)/);
+    assert.match(err.message, /validas: audio, camera, keyboard, location, push, store, weblogin, window\)/);
     return true;
   });
 });

@@ -3,11 +3,12 @@ import { join } from 'node:path';
 import { DevslimError } from './errors.ts';
 
 // Capacidades religam o que o app precisa em cima do perfil mais economico.
-export const CAPABILITIES = Object.freeze(['audio', 'camera', 'location', 'push', 'store', 'weblogin', 'window'] as const);
+// keyboard: so Android (mantem o Gboard no bake --aggressive); no iOS nao muda nada.
+export const CAPABILITIES = Object.freeze(['audio', 'camera', 'keyboard', 'location', 'push', 'store', 'weblogin', 'window'] as const);
 export type Capability = (typeof CAPABILITIES)[number];
 
-// Dependencia exata -> capacidade. `store` e `window` nunca sao derivados:
-// so entram via --need.
+// Dependencia exata -> capacidade. `store`, `window` e `keyboard` nunca sao
+// derivados: so entram via --need.
 const DERIVED_BY_NAME: Readonly<Record<string, Capability>> = Object.freeze({
   'expo-audio': 'audio',
   'expo-av': 'audio',

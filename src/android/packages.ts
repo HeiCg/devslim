@@ -18,6 +18,7 @@ export type BloatCategory = Readonly<{
 // Pacotes que nunca desligamos, mesmo que aparecam em alguma lista de origem.
 // bluetooth: system_server entra em crash-loop no Android 16+ sem ele.
 // chrome: expo-web-browser e OAuth dependem dele.
+// O Gboard saiu daqui: vai so na lista aggressive (ver GBOARD).
 export const NEVER_DISABLE: readonly string[] = Object.freeze([
   'com.google.android.bluetooth',
   'com.android.chrome',
@@ -27,12 +28,15 @@ export const NEVER_DISABLE: readonly string[] = Object.freeze([
   'com.android.systemui',
   'com.android.settings',
   'com.android.providers.settings',
-  'com.google.android.inputmethod.latin',
   'com.android.inputmethod.latin',
   'com.android.shell',
 ]);
 
 export const PLAY_STORE = 'com.android.vending';
+// Teclado na tela do google_apis (medido 2026-11-17: 81 MB de PSS no guest).
+// Sem ele o texto ainda chega por adb/argent input, mas layout que desvia do
+// teclado nao da para testar; a capacidade keyboard o mantem.
+export const GBOARD = 'com.google.android.inputmethod.latin';
 
 // Religados por capacidade: a capacidade presente tira o pacote do plano.
 export const KEPT_BY_CAPABILITY: Readonly<Partial<Record<Capability, readonly string[]>>> = Object.freeze({
@@ -40,6 +44,7 @@ export const KEPT_BY_CAPABILITY: Readonly<Partial<Record<Capability, readonly st
   // App que usa mapa/geocoding costuma abrir o Maps (intents geo:, navegacao).
   location: Object.freeze(['com.google.android.apps.maps']),
   store: Object.freeze([PLAY_STORE]),
+  keyboard: Object.freeze([GBOARD]),
 });
 
 function category(id: string, level: BloatLevel, description: string, packages: string[]): BloatCategory {
@@ -137,6 +142,7 @@ export const BLOAT_CATEGORIES: readonly BloatCategory[] = Object.freeze([
     'com.google.android.setupwizard',
     'com.android.setupwizard',
   ]),
+  category('on-screen-keyboard', 'aggressive', 'Teclado na tela (Gboard); texto continua chegando por adb/argent input', [GBOARD]),
 ]);
 
 const LEVEL_RANK: Readonly<Record<BloatLevel, number>> = Object.freeze({ standard: 0, aggressive: 1 });

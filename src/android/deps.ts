@@ -1,7 +1,7 @@
 import { nodeExec, nodeSpawnDetached, type Exec, type SpawnDetached } from '../exec.ts';
 import { createAdb, realSleep, type Adb, type Sleep } from './adb.ts';
 import { nodePidAlive, runningDir, type PidAlive } from './runningIni.ts';
-import { findSdkTool, type SdkTool } from './sdk.ts';
+import { defaultDirExists, findSdkTool, type SdkTool } from './sdk.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -15,6 +15,8 @@ export type RuntimeContext = {
   now?: () => number; // ms, para timeouts e tempos por etapa
   date?: () => Date; // carimbo de hora gravado no state
   fileExists?: (path: string) => boolean; // localizar binarios do SDK
+  dirExists?: (path: string) => boolean; // system image instalada no SDK (create)
+  arch?: string; // process.arch do host: ABI dos atalhos de imagem do create
   stderr?: (text: string) => void; // avisos
   bootTimeoutMs?: number;
   exitTimeoutMs?: number;
@@ -34,6 +36,8 @@ export type Runtime = Readonly<{
   now: () => number;
   date: () => Date;
   stderr: (text: string) => void;
+  dirExists: (path: string) => boolean;
+  arch: string;
   bootTimeoutMs: number | undefined;
   exitTimeoutMs: number | undefined;
   pollMs: number | undefined;
@@ -58,6 +62,8 @@ export function resolveRuntime(ctx: RuntimeContext = {}): Runtime {
     now,
     date: ctx.date ?? (() => new Date()),
     stderr: ctx.stderr ?? ((t: string) => { process.stderr.write(t); }),
+    dirExists: ctx.dirExists ?? defaultDirExists,
+    arch: ctx.arch ?? process.arch,
     bootTimeoutMs: ctx.bootTimeoutMs,
     exitTimeoutMs: ctx.exitTimeoutMs,
     pollMs: ctx.pollMs,

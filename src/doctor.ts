@@ -18,10 +18,11 @@ import { isSoftwareGpu, parseRamMb, readEffectiveHardware } from './android/hard
 import { classifyLauncher, launcherText, listQemuProcesses } from './android/launcher.ts';
 import { findRunningEntry, isAdvertised, scanRunning } from './android/runningIni.ts';
 import { listStates, loadState, type AndroidState } from './state.ts';
+import { DEFAULT_API, imageTag, isAtdTag, isGoogleApisTag } from './android/images.ts';
 
 // `devslim doctor`: so leitura. Nunca chama adb, nunca executa o argent,
 // nunca apaga nada. Checagens por AVD/device: avd-gpu e avd-ram dao uma linha
-// por AVD (ultimo boot); profile-drift, running-off-profile, emulator-advertised,
+// por AVD (ultimo boot); profile-drift, avd-image, running-off-profile, emulator-advertised,
 // default-boot-snapshot, orphan-images e ios-always-enabled dao uma linha por
 // ocorrencia (ou um unico ok).
 
@@ -173,10 +174,15 @@ function checkAvdRam(list: readonly AvdInfo[], home: string): Check[] {
     const asked = cfg === null ? null : parseRamMb(getValue(cfg, 'hw.ramSize'));
     if (runtime === null) return check('avd-ram', 'ok', `${a.name}: sem hw.ramSize no hardware-qemu.ini (nao bootou desde o ultimo tune)`);
     const why: string[] = [];
-    if (asked !== null && runtime > asked) why.push(`acima dos ${asked} MB do config.ini (emulador elevou)`);
+    const raised = asked !== null && runtime > asked;
+    if (raised) why.push(`acima dos ${asked} MB do config.ini (emulador elevou)`);
     if (runtime > RAM_WARN_MB) why.push(`acima de ${RAM_WARN_MB} MB`);
     if (why.length > 0) {
-      return check('avd-ram', 'warn', `${a.name}: ultimo boot usou ${runtime} MB, ${why.join(' e ')}`, `devslim android tune ${a.name} (e suba com devslim android up, que passa -memory)`);
+      // Elevou: o emulador ignora -memory abaixo do piso sem lowram; tela menor nao ajuda (medido).
+      const fix = raised
+        ? `devslim android tune ${a.name} --lowram (com o AVD desligado; o emulador ignora -memory abaixo do piso dele sem lowram; o lowram muda o comportamento dos apps: o guest se declara aparelho de pouca RAM)`
+        : `devslim android tune ${a.name} (e suba com devslim android up, que passa -memory)`;
+      return check('avd-ram', 'warn', `${a.name}: ultimo boot usou ${runtime} MB, ${why.join(' e ')}`, fix);
     }
     return check('avd-ram', 'ok', `${a.name}: ${runtime} MB${asked !== null ? ` (config.ini ${asked} MB)` : ''}`);
   });
@@ -242,6 +248,74 @@ function checkProfileDrift(env: Runtime['env']): Check[] {
   if (out.length > 0) return out;
   const skip = skipped > 0 ? `; ${skipped} pulado(s) (AVD ausente ou config.ini ilegivel)` : '';
   return [check('profile-drift', 'ok', `${clean} AVD(s) com config.ini no perfil salvo${skip}`)];
+}
+
+// Tag da system image de cada AVD com state x capacidades que dependem dos
+// servicos Google. google_apis (ou playstore) sem nenhuma delas: nota ok
+// sugerindo ATD, com o numero medido. ATD/default com alguma delas: warn. AVD
+// ausente, config.ini ilegivel ou sem tag: pulado. So leitura.
+export const GOOGLE_SERVICE_CAPABILITIES: readonly Capability[] = Object.freeze(['push', 'weblogin', 'store']);
+// Medido 2026-11-17 (API 35, pixel_7, 2 min parado, uma medicao cada):
+// phys_footprint do qemu com o perfil padrao do devslim em aosp_atd x google_apis.
+export const ATD_FOOTPRINT_MB = 3660;
+export const GOOGLE_APIS_FOOTPRINT_MB = 4343;
+
+const TAG_TEXT: Readonly<Record<string, string>> = Object.freeze({
+  aosp_atd: 'sem servicos Google',
+  default: 'sem servicos Google',
+  google_atd: 'servicos Google reduzidos',
+});
+
+function checkAvdImage(env: Runtime['env']): Check[] {
+  const names = listStates('android', { env });
+  if (names.length === 0) return [check('avd-image', 'ok', 'nenhum AVD com state do devslim')];
+  const out: Check[] = [];
+  let fine = 0;
+  let skipped = 0;
+  for (const name of names) {
+    let caps: readonly string[];
+    let cfg: IniDoc | null;
+    try {
+      const profile = loadState<AndroidState>('android', name, { env })?.profile;
+      if (profile === undefined || !Array.isArray(profile.capabilities)) throw new Error('state sem perfil');
+      caps = profile.capabilities;
+      cfg = readIni(findAvd(name, { env }).configPath);
+    } catch {
+      skipped++;
+      continue;
+    }
+    const sysdir = cfg === null ? undefined : getValue(cfg, 'image.sysdir.1');
+    const tag = cfg === null ? null : imageTag({ tagId: getValue(cfg, 'tag.id'), sysdir });
+    if (tag === null) {
+      skipped++;
+      continue;
+    }
+    const api = /(?:^|\/)android-(\d+)(?:\/|$)/.exec((sysdir ?? '').replace(/\\/g, '/'))?.[1];
+    const apiFlag = api !== undefined && Number(api) !== DEFAULT_API ? ` --api ${api}` : '';
+    const needs = GOOGLE_SERVICE_CAPABILITIES.filter((c) => caps.includes(c));
+    if (isGoogleApisTag(tag) && needs.length === 0) {
+      out.push(check(
+        'avd-image',
+        'ok',
+        `${name}: imagem ${tag} (servicos Google completos) e o perfil nao pede push, weblogin nem store; ` +
+          `uma imagem ATD pesa menos (medido com aosp_atd: ${ATD_FOOTPRINT_MB} MB contra ${GOOGLE_APIS_FOOTPRINT_MB} MB de phys_footprint no host, 2 min parado, uma medicao cada)`,
+        `devslim android create ${name}-atd --image aosp_atd${apiFlag}`,
+      ));
+    } else if (isAtdTag(tag) && needs.length > 0) {
+      const verdict = tag === 'google_atd' ? 'pode nao funcionar' : 'nao funciona';
+      out.push(check(
+        'avd-image',
+        'warn',
+        `${name}: imagem ${tag} (${TAG_TEXT[tag]}) e o perfil pede ${needs.join(',')}: ${verdict} nessa imagem`,
+        `devslim android create ${name}-gapis --image google_apis${apiFlag}`,
+      ));
+    } else {
+      fine++;
+    }
+  }
+  if (out.length > 0) return out;
+  const skip = skipped > 0 ? `; ${skipped} pulado(s) (AVD ausente, config.ini ilegivel ou sem tag da imagem)` : '';
+  return [check('avd-image', 'ok', `${fine} AVD(s) com imagem compativel com as capacidades do perfil${skip}`)];
 }
 
 // Emulador rodando agora fora do perfil: GPU efetiva por software, ou AVD
@@ -452,6 +526,7 @@ export async function runDoctor(ctx: DoctorContext = {}): Promise<Check[]> {
     ...checkAvdGpu(list, home),
     ...checkAvdRam(list, home),
     ...checkProfileDrift(rt.env),
+    ...checkAvdImage(rt.env),
     ...(await checkRunningOffProfile(rt)),
     ...(await checkEmulatorAdvertised(rt)),
     checkArgentGpu(rt.env),

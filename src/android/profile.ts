@@ -32,6 +32,8 @@ export type AndroidProfile = Readonly<{
 export type AndroidProfileOptions = {
   ramMb?: number;
   aggressive?: boolean;
+  // -lowram sem mexer na RAM. Ausente = o que --aggressive diz.
+  lowRam?: boolean;
   gpu?: string;
   vulkan?: boolean;
   screen?: string;
@@ -60,6 +62,8 @@ export function formatScreen(screen: Screen): string {
 }
 
 // Perfil imutavel. RAM e sempre parametro: padrao 2048, --aggressive 1536 + lowRam.
+// lowRam explicito vence o --aggressive. Sem lowRam o emulador eleva qualquer
+// -memory abaixo do piso dele (medido: 2560 MB em phone, 4096 MB em tablet).
 export function buildAndroidProfile(opts: AndroidProfileOptions = {}): AndroidProfile {
   const aggressive = opts.aggressive === true;
   const ramMb = opts.ramMb ?? (aggressive ? AGGRESSIVE_RAM_MB : DEFAULT_RAM_MB);
@@ -87,7 +91,7 @@ export function buildAndroidProfile(opts: AndroidProfileOptions = {}): AndroidPr
     cores: CORES,
     gpu,
     vulkan: opts.vulkan === true,
-    lowRam: aggressive,
+    lowRam: opts.lowRam ?? aggressive,
     screen: parseScreen(opts.screen ?? 'keep'),
     port,
     capabilities: Object.freeze(parseCapabilities(opts.capabilities ?? [])),

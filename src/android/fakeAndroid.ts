@@ -50,6 +50,11 @@ export type FakeAndroidOptions = {
   // Defaults para o emulador que o spawnDetached "sobe".
   spawned?: Omit<FakeEmulatorInit, 'avd' | 'port'>;
   avdmanagerFails?: boolean;
+  // System images "instaladas" no SDK falso (ids completos). Padrao: google_apis
+  // API 35 nas duas ABIs. dirExists responde so por elas.
+  systemImages?: readonly string[];
+  // process.arch do host falso (padrao arm64).
+  arch?: string;
   // Diretorio do AVD, para o snapshot save criar snapshots/<nome>.
   avdDir?: (avd: string) => string | null;
   // cmdline: resposta de `ps -o command= -p <pid>` (linha do qemu).
@@ -185,6 +190,7 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     if (opts.avdmanagerFails) return fail('Error: Package path is not valid. Valid system image paths are:', 1);
     if (call.opts.input !== 'no\n') return fail('esperava "no" no stdin', 3);
     const name = a[a.indexOf('-n') + 1];
+    const [, api, tag, abi] = (a[a.indexOf('-k') + 1] ?? '').split(';');
     const home = opts.avdHome;
     if (home) {
       const dir = join(home, `${name}.avd`);
@@ -192,7 +198,8 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
       writeFileSync(join(home, `${name}.ini`), `avd.ini.encoding=UTF-8\npath=${dir}\npath.rel=avd/${name}.avd\ntarget=android-35\n`);
       writeFileSync(
         join(dir, 'config.ini'),
-        `AvdId=${name}\nabi.type=arm64-v8a\nhw.ramSize=2G\nhw.gpu.mode=auto\nhw.lcd.width=1080\nhw.lcd.height=2400\nhw.lcd.density=420\n`,
+        `AvdId=${name}\nabi.type=${abi ?? 'arm64-v8a'}\nhw.ramSize=2G\nhw.gpu.mode=auto\nhw.lcd.width=1080\nhw.lcd.height=2400\nhw.lcd.density=420\n` +
+          `image.sysdir.1=system-images/${api}/${tag}/${abi}/\ntag.id=${tag}\n`,
       );
     }
     return ok(`Do you wish to create a custom hardware profile? [no] `);
@@ -214,6 +221,12 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     if (cmd === 'ps') return opts.host?.rss == null ? { code: 1 } : ok(opts.host.rss);
     return undefined;
   });
+
+  const images = opts.systemImages ?? [
+    'system-images;android-35;google_apis;arm64-v8a',
+    'system-images;android-35;google_apis;x86_64',
+  ];
+  const imageDirs = new Set(images.map((id) => join(sdk, ...id.split(';'))));
 
   const spawnCalls: FakeSpawnCall[] = [];
   const spawnDetached: SpawnDetached = async (cmd, args, o) => {
@@ -244,6 +257,8 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     now: () => clock.t,
     date: () => new Date('2026-11-16T12:00:00.000Z'),
     fileExists: (p: string) => (Object.values(tools) as string[]).includes(p),
+    dirExists: (p: string) => imageDirs.has(p),
+    arch: opts.arch ?? 'arm64',
     emulators,
     addEmulator,
     deviceCommands,

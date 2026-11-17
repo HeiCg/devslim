@@ -68,6 +68,7 @@ export {
   BLOAT_CATEGORIES,
   NEVER_DISABLE,
   PLAY_STORE,
+  GBOARD,
   KEPT_BY_CAPABILITY,
   managedPackages,
   planDisable,
@@ -88,7 +89,20 @@ export { planTune, tuneAvd, restoreAvd } from './android/tune.ts';
 export type { TunePlan, TuneResult, RestoreResult, RestoreOptions, TuneContext } from './android/tune.ts';
 
 // Runtime Android (fala com adb/emulator/avdmanager via Exec injetavel).
-export { findSdkTool, findSdkRoot, sdkToolPath, sdkCandidates, defaultFileExists } from './android/sdk.ts';
+export { findSdkTool, findSdkRoot, sdkToolPath, sdkCandidates, defaultFileExists, defaultDirExists, sdkRootOfTool } from './android/sdk.ts';
+export {
+  IMAGE_SHORTCUTS,
+  DEFAULT_API,
+  DEFAULT_SHORTCUT,
+  hostAbi,
+  isShortcut,
+  resolveImage,
+  imageDir,
+  imageTag,
+  isGoogleApisTag,
+  isAtdTag,
+} from './android/images.ts';
+export type { ImageShortcut } from './android/images.ts';
 export type { SdkTool, SdkOptions } from './android/sdk.ts';
 export {
   createAdb,
@@ -130,12 +144,12 @@ export {
   createAvd,
   pickFreePort,
   ramFloorWarning,
+  lowRamTuneHint,
   offProfileWarning,
   bakeHint,
   notAdvertisedWarning,
   ADVERTISE_TIMEOUT_MS,
   ADVERTISE_POLL_MS,
-  FLOOR_SCREEN_TRY,
   hasSlimSnapshot,
   slimSnapshotDir,
   logFileFor,
@@ -256,8 +270,12 @@ export {
   parseRamIncreaseLine,
   ramIncreaseFromLog,
   ramIncreaseLineFromLog,
+  lastBootRaise,
+  ramFloorNote,
+  OBSERVED_FLOOR_PHONE_MB,
+  OBSERVED_FLOOR_TABLET_MB,
 } from './android/hardwareQemu.ts';
-export type { EffectiveHardware } from './android/hardwareQemu.ts';
+export type { EffectiveHardware, LastBootRam } from './android/hardwareQemu.ts';
 export { classifyLauncher, parseQemuProcesses, listQemuProcesses, processCommandLine, launcherFor, launcherText } from './android/launcher.ts';
 export type { Launcher, QemuProcess } from './android/launcher.ts';
 export type { TopDownOutcome, AnyMeasurement } from './topLevel.ts';

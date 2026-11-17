@@ -45,6 +45,8 @@ function world(opts: FakeAndroidOptions = {}) {
     now: fake.now,
     date: fake.date,
     fileExists: fake.fileExists,
+    dirExists: fake.dirExists,
+    arch: fake.arch,
     stderr: (t: string) => { stderr.push(t); },
     runningDir: running,
     pidAlive: (_pid: number) => true, // pid_<pid>.ini dos testes de anuncio = emulador vivo
@@ -306,9 +308,44 @@ test('create: avdmanager com args exatos e "no" no stdin; aplica tune com 720x16
 });
 
 test('create com --image/--device e falha do avdmanager', async () => {
-  const { fake, ctx } = world({ avdmanagerFails: true });
+  const { fake, ctx } = world({ avdmanagerFails: true, systemImages: ['system-images;android-34;google_apis;arm64-v8a'] });
   await assert.rejects(createAvd('x-api34', { ...ctx, image: 'system-images;android-34;google_apis;arm64-v8a', device: 'pixel_6' }), /avdmanager create avd x-api34 falhou \(exit 1\)/);
   assert.deepEqual(fake.exec.calls[0].args.slice(-4), ['-k', 'system-images;android-34;google_apis;arm64-v8a', '-d', 'pixel_6']);
+});
+
+test('create com atalho: --image aosp_atd/google_atd/default e --api expandem com a ABI do host', async () => {
+  const images = ['system-images;android-35;aosp_atd;arm64-v8a', 'system-images;android-34;google_atd;arm64-v8a', 'system-images;android-35;default;x86_64'];
+  const { fake, ctx } = world({ systemImages: images });
+  const a = await createAvd('atd-api35', { ...ctx, image: 'aosp_atd' });
+  assert.equal(a.image, 'system-images;android-35;aosp_atd;arm64-v8a');
+  const g = await createAvd('gatd-api34', { ...ctx, image: 'google_atd', api: 34 });
+  assert.equal(g.image, 'system-images;android-34;google_atd;arm64-v8a');
+  const d = await createAvd('def-x86', { ...ctx, image: 'default', arch: 'x64' });
+  assert.equal(d.image, 'system-images;android-35;default;x86_64');
+  assert.deepEqual(fake.exec.calls.map((c) => c.args[c.args.indexOf('-k') + 1]), images);
+  assert.match(readFileSync(join(avdHome, 'atd-api35.avd', 'config.ini'), 'utf8'), /^tag\.id=aosp_atd$/m);
+});
+
+test('create sem imagem em host x86_64: google_apis x86_64', async () => {
+  const { fake, ctx } = world();
+  const r = await createAvd('x86-api35', { ...ctx, arch: 'x64' });
+  assert.equal(r.image, 'system-images;android-35;google_apis;x86_64');
+  assert.equal(fake.exec.calls[0].args[fake.exec.calls[0].args.indexOf('-k') + 1], 'system-images;android-35;google_apis;x86_64');
+});
+
+test('create com imagem nao instalada: erro com o comando sdkmanager exato, sem chamar avdmanager nem baixar', async () => {
+  const { fake, ctx } = world({ systemImages: [] });
+  await assert.rejects(
+    createAvd('atd-api35', { ...ctx, image: 'aosp_atd' }),
+    (e: Error) =>
+      e.message.includes('imagem system-images;android-35;aosp_atd;arm64-v8a nao instalada') &&
+      e.message.includes(join(fake.sdk, 'system-images', 'android-35', 'aosp_atd', 'arm64-v8a')) &&
+      e.message.includes('sdkmanager "system-images;android-35;aosp_atd;arm64-v8a"'),
+  );
+  // id completo tambem e conferido
+  await assert.rejects(createAvd('full', { ...ctx, image: 'system-images;android-33;google_apis;arm64-v8a' }), /sdkmanager "system-images;android-33;google_apis;arm64-v8a"/);
+  assert.equal(fake.exec.calls.length, 0, 'nem avdmanager nem sdkmanager');
+  assert.ok(!existsSync(join(avdHome, 'atd-api35.avd')));
 });
 
 test('SDK ausente: erro dizendo qual binario e onde procurou', async () => {
@@ -328,14 +365,23 @@ function emulatorWrites(ctx: ReturnType<typeof world>['ctx'], w: { hwIni?: strin
   };
 }
 
-test('up: RAM efetiva do hardware-qemu.ini maior que a pedida avisa em stderr com os dois valores e a tentativa de tela', async () => {
+test('up: RAM efetiva do hardware-qemu.ini maior que a pedida avisa em stderr com os dois valores e sugere --lowram', async () => {
   const { ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), emulatorWrites(ctx, { hwIni: 'hw.ramSize = 2560\nhw.gpu.mode = host\nvm.heapSize = 576\n' }));
   assert.equal(r.ramEffectiveMb, 2560);
   const err = stderr.join('');
   assert.match(err, /aviso: RAM pedida 2048 MB, efetiva 2560 MB \(emulador elevou; -memory 2048 nao vence\)\. /);
-  assert.doesNotMatch(err, /piso do emulador|log: /, 'rotulo honesto; sem linha no log, nada citado');
-  assert.match(err, /Tentativa, sem garantia de baixar a RAM efetiva: .*devslim android tune slim-api35 --screen 720x1600@320/);
+  assert.doesNotMatch(err, /log: /, 'sem linha no log, nada citado');
+  assert.match(err, /O emulador ignora -memory abaixo do piso dele a menos que o lowram esteja ligado\. Com o AVD desligado: devslim android tune slim-api35 --lowram \(o lowram muda o comportamento dos apps: o guest se declara aparelho de pouca RAM\)$/m);
+  assert.doesNotMatch(err, /--screen|tela menor/, 'tela menor nao baixa o piso (medido)');
+});
+
+test('up: RAM elevada mesmo com lowram = aviso sem sugerir --lowram de novo', async () => {
+  const { ctx } = world();
+  await upAvd(AVD, buildAndroidProfile({ lowRam: true }), emulatorWrites(ctx, { hwIni: 'hw.ramSize = 2560\n' }));
+  const err = stderr.join('');
+  assert.match(err, /efetiva 2560 MB \(emulador elevou mesmo com lowram; -memory 2048 nao vence\)/);
+  assert.doesNotMatch(err, /tune slim-api35 --lowram/);
 });
 
 test('up: aviso de RAM cita a linha do log deste boot quando ha', async () => {
@@ -346,7 +392,7 @@ test('up: aviso de RAM cita a linha do log deste boot quando ha', async () => {
     emulatorWrites(ctx, { hwIni: 'hw.ramSize = 2560\n', log: 'INFO         | Increasing RAM size to 2560MB\n' }),
   );
   assert.equal(r.ramEffectiveMb, 2560);
-  assert.match(stderr.join(''), /\(emulador elevou; -memory 2048 nao vence\); log: "INFO \| Increasing RAM size to 2560MB"\. Tentativa/);
+  assert.match(stderr.join(''), /\(emulador elevou; -memory 2048 nao vence\); log: "INFO \| Increasing RAM size to 2560MB"\. O emulador ignora/);
 });
 
 const ARGENT_LINE = '/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd slim-api35 -no-snapshot-load -gpu auto -feature -Vulkan -noaudio -no-boot-anim -netfast -no-metrics -crash-report-mode never';

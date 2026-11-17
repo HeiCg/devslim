@@ -53,6 +53,19 @@ test('--aggressive com port', () => {
   ]);
 });
 
+test('-lowram sai exatamente quando o perfil tem lowRam, independente da RAM', () => {
+  for (const ramMb of [1536, 2048, 3072]) {
+    for (const lowRam of [false, true]) {
+      for (const aggressive of [false, true]) {
+        const p = buildAndroidProfile({ ramMb, lowRam, aggressive });
+        const args = buildLaunchArgs('a', p);
+        assert.equal(args.includes('-lowram'), lowRam, `ram ${ramMb} lowRam ${lowRam} aggressive ${aggressive}`);
+        assert.equal(args[args.indexOf('-memory') + 1], String(ramMb), 'lowram nao muda a RAM');
+      }
+    }
+  }
+});
+
 test('capacidade window tira -no-window', () => {
   assert.deepEqual(buildLaunchArgs('a', buildAndroidProfile({ capabilities: ['window'] })), [
     '-avd', 'a', '-gpu', 'host', '-memory', '2048', '-cores', '2',

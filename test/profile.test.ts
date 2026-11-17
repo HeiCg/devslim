@@ -33,6 +33,17 @@ test('--aggressive = 1536 + lowRam; RAM explicita vence', () => {
   assert.equal(b.lowRam, true);
 });
 
+test('lowRam proprio: liga -lowram sem mexer na RAM; lowRam explicito vence o --aggressive', () => {
+  const l = buildAndroidProfile({ lowRam: true });
+  assert.equal(l.ramMb, 2048);
+  assert.equal(l.lowRam, true);
+  const r = buildAndroidProfile({ lowRam: true, ramMb: 3072 });
+  assert.deepEqual([r.ramMb, r.lowRam], [3072, true]);
+  const a = buildAndroidProfile({ aggressive: true, lowRam: false });
+  assert.deepEqual([a.ramMb, a.lowRam], [1536, false]);
+  assert.equal(buildAndroidProfile({ lowRam: false }).lowRam, false);
+});
+
 test('RAM fora de 1536..8192 da erro claro', () => {
   for (const ramMb of [1024, 1535, 8193, 2048.5]) {
     assert.throws(() => buildAndroidProfile({ ramMb }), (e: unknown) => e instanceof DevslimError && /RAM invalida/.test(e.message));
