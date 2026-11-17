@@ -503,6 +503,33 @@ iOS, iPhone 17, iOS 26.4:
 | sem devslim | 279 | 4629 MB |
 | devslim padrao (boot 3.4 s) | 67 | 953 MB |
 
+Comparacao direta com o simslim 0.11.0 (Homebrew), iPhone 17, iOS 26.4,
+simulador novo para cada ferramenta, duas rodadas alternadas, 2 min parado:
+
+| ferramenta | 1o boot | 2o boot | labels desligados no system |
+|---|---|---|---|
+| simslim, rodada 1 | 92 proc, 2867 MB | 71 proc, 2800 MB | 171 |
+| devslim, rodada 1 | 76 proc, 1206 MB | 65 proc, 976 MB | 174 |
+| simslim, rodada 2 | 90 proc, 2447 MB | 70 proc, 2659 MB | 171 |
+| devslim, rodada 2 | 76 proc, 1114 MB | 64 proc, 967 MB | 174 |
+
+A diferenca vem quase toda do Spotlight: 1533 MB no simulador do simslim contra
+68 MB no do devslim; o resto da lista de processos e parecido. O devslim desliga
+5 labels que o simslim 0.11.0 deixa ligados (`ClipServices.clipserviced`,
+`RemoteManagementAgent`, `accessibility.axassetsd`, `managedassetsd`,
+`remotemanagementd`). Qual deles segura o Spotlight nao foi isolado.
+
+Outras medicoes do mesmo dia, devslim, 2 min parado:
+
+- iOS 18.6, iPhone 16: 248 processos e 4705 MB sem devslim; 71 e 1136 MB com.
+  Versao mais antiga nao rende mais que a 26.4.
+- iPhone 17, 17e e SE 3 no 26.4 ficaram entre 1082 e 1192 MB no primeiro boot:
+  tamanho de tela nao muda o resultado.
+- O primeiro boot de um simulador novo custa uns 150 MB e uns 13 s a mais que
+  os seguintes.
+- Desligar daemons extras no dominio `user/foreground` nao funciona: 11 de 13
+  voltaram depois do reboot.
+
 Ressalvas:
 
 - Uma medicao por linha, sem app aberto.
