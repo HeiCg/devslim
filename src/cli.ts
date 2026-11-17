@@ -31,106 +31,106 @@ export type CliIo = {
   stderr: (text: string) => void;
   env: Env;
   cwd: string;
-  // Injecao para testes (exec, spawnDetached, sleep, relogio, base do store iOS). Ausente = real.
+  // Test injection (exec, spawnDetached, sleep, clock, iOS store base). Absent = real.
   runtime?: Omit<IosContext, 'env' | 'stderr'>;
 };
 
-export const HELP = `devslim ${pkg.version}: emulador Android e simulador iOS economicos
+export const HELP = `devslim ${pkg.version}: lean Android emulator and iOS simulator
 
-uso:
-  devslim status [--json]                o que esta bootado, perfil aplicado, drift, sessao e swap (so leitura, sem adb)
-  devslim doctor [--json]                checagens de ambiente (Xcode, SDK, emulator, AVDs, argent, swap, state orfao);
-                                         exit 1 se houver fail
-  devslim down [--force] [--json]        desliga tudo que a sessao subiu (Android e iOS); remove entradas mortas sem matar
-  devslim prune [--json]                 tira da sessao entradas de device que ja nao roda (e o auto-desligar delas);
-                                         nao desliga nada nem apaga state: down desliga devices vivos, prune so limpa registros
-  devslim measure [--json]               mede todo emulador e simulador rodando (array; vazio se nada roda)
+usage:
+  devslim status [--json]                what is booted, applied profile, drift, session and swap (read-only, no adb)
+  devslim doctor [--json]                environment checks (Xcode, SDK, emulator, AVDs, argent, swap, orphan state);
+                                         exit 1 on any fail
+  devslim down [--force] [--json]        shuts down everything the session started (Android and iOS); drops dead entries without killing
+  devslim prune [--json]                 drops session entries for devices no longer running (and their idle-down);
+                                         shuts nothing down and deletes no state: down stops live devices, prune only cleans records
+  devslim measure [--json]               measures every running emulator and simulator (array; empty if nothing runs)
 
-  devslim android plan <avd> [flags]     mostra mudancas do config.ini e a linha do emulator (nao escreve)
-  devslim android tune <avd> [flags]     salva state, reescreve config.ini, apaga hardware-qemu.ini e snapshots/
-  devslim android create <nome> [--image I] [--api N] [--device D]
-                                         cria AVD (avdmanager) e aplica tune com tela 720x1600@320; nao boota;
-                                         a system image tem que estar instalada (senao mostra o sdkmanager)
+  devslim android plan <avd> [flags]     shows config.ini changes and the emulator command line (writes nothing)
+  devslim android tune <avd> [flags]     saves state, rewrites config.ini, deletes hardware-qemu.ini and snapshots/
+  devslim android create <name> [--image I] [--api N] [--device D]
+                                         creates the AVD (avdmanager) and applies tune with a 720x1600@320 screen; does not boot;
+                                         the system image must be installed (otherwise prints the sdkmanager command)
   devslim android up <avd> [flags] [--force] [--idle-down D]
-                                         boota do snapshot slim_base (se houver) com flags economicas; avisa se o
-                                         emulador elevou a RAM pedida, se o AVD ja roda fora do perfil (argent,
-                                         GPU por software) e sugere bake quando nao ha slim_base
+                                         boots from the slim_base snapshot (if any) with lean flags; warns if the
+                                         emulator raised the requested RAM, if the AVD already runs outside the profile (argent,
+                                         software GPU) and suggests bake when there is no slim_base
   devslim android bake <avd> [--aggressive] [--need a,b] [--for <dir>] [--no-grpc|--grpc]
                          [--lowram|--no-lowram] [--force]
-                                         boota sem snapshot, enxuga via adb, grava snapshot slim_base e desliga
-  devslim android down [<avd>] [--force] desliga o que o devslim subiu (--force: qualquer emulador)
+                                         cold boots, slims down via adb, saves the slim_base snapshot and shuts down
+  devslim android down [<avd>] [--force] shuts down what devslim started (--force: any emulator)
   devslim android restore <avd> [--config-only]
-                                         desfaz pacotes/settings no guest (AVD rodando) e devolve config.ini
-  devslim android measure <avd> [--json] phys_footprint, cabecalho do footprint e RSS do qemu no host; memoria e processos no guest
+                                         undoes packages/settings in the guest (AVD running) and restores config.ini
+  devslim android measure <avd> [--json] phys_footprint, footprint header and qemu RSS on the host; memory and processes in the guest
   devslim android forget <avd> [--force] [--json]
-                                         apaga o state (e a entrada da sessao) de AVD que nao existe mais; nunca toca o
-                                         device; AVD existente: use restore (--force apaga o registro mesmo assim)
+                                         deletes the state (and the session entry) of an AVD that no longer exists; never touches the
+                                         device; existing AVD: use restore (--force deletes the record anyway)
 
-  devslim ios plan <udid|nome> [flags ios]
-                                         labels que o up desligaria e quantos ja estao no store (nao escreve)
-  devslim ios up <udid|nome> [flags ios] [--force] [--idle-down D]
-                                         desliga labels launchd no disabled.plist do device e boota; exit 3 se algum nao pegou
-  devslim ios off <udid|nome> [--json]   devolve cada label ao valor salvo e limpa o state (reboota se estava bootado)
-  devslim ios down [<udid|nome>] [--force] [--json]
-                                         shutdown do que o devslim subiu (--force: qualquer simulador bootado)
-  devslim ios measure <udid|nome> [--json]
-                                         processos, phys_footprint e %cpu da arvore do launchd_sim
-  devslim ios forget <udid|nome> [--force] [--json]
-                                         apaga o state (e a entrada da sessao) de simulador que nao existe mais; nunca
-                                         toca o device; simulador existente: use ios off (--force apaga mesmo assim)
-  devslim ios categories [--json]        categorias de labels, quantos labels e o que quebra
+  devslim ios plan <udid|name> [ios flags]
+                                         labels that up would disable and how many are already in the store (writes nothing)
+  devslim ios up <udid|name> [ios flags] [--force] [--idle-down D]
+                                         disables launchd labels in the device disabled.plist and boots; exit 3 if any did not stick
+  devslim ios off <udid|name> [--json]   returns each label to its saved value and clears the state (reboots if it was booted)
+  devslim ios down [<udid|name>] [--force] [--json]
+                                         shuts down what devslim started (--force: any booted simulator)
+  devslim ios measure <udid|name> [--json]
+                                         processes, phys_footprint and %cpu of the launchd_sim tree
+  devslim ios forget <udid|name> [--force] [--json]
+                                         deletes the state (and the session entry) of a simulator that no longer exists; never
+                                         touches the device; existing simulator: use ios off (--force deletes anyway)
+  devslim ios categories [--json]        label categories, label counts and what breaks
   devslim --help | --version
 
-flags de plan/tune/up (herdam o perfil do tune; flags sobrepoem):
-  --ram N          RAM em MB (1536..8192, padrao 2048); abaixo do piso do emulador (visto: 2560 MB
-                   em phone, 4096 MB em tablet) ele eleva o pedido sem erro, salvo com --lowram
+plan/tune/up flags (inherit the tune profile; flags override it):
+  --ram N          RAM in MB (1536..8192, default 2048); below the emulator floor (seen: 2560 MB
+                   on phone, 4096 MB on tablet) it raises the request silently, unless --lowram
   --aggressive     RAM 1536 + -lowram
-  --lowram         passa -lowram sem mudar a RAM: o -memory pedido passa a valer, mas o guest se
-                   declara aparelho de pouca RAM (muda o comportamento dos apps); tambem vale no bake
-  --no-lowram      tira o lowram salvo pelo tune ou o do --aggressive; nao combina com --lowram
-  --gpu M          modo de GPU (padrao host)
-  --vulkan         religa Vulkan no guest (sem -feature -Vulkan)
-  --screen S       keep (padrao) ou LxA@dpi, ex. 720x1600@320
-  --port N         porta par entre 5554 e 5682 (serial emulator-N); gRPC em 8554 + (N - 5554)
-  --no-grpc        lanca sem -grpc <porta> -grpc-use-token (o emulador nao grava o running ini
-                   que o argent usa para screenshot/tap); tambem vale no bake
-  --grpc           religa o gRPC quando o tune salvou --no-grpc (sobrepoe o perfil salvo);
-                   tambem vale no bake; nao combina com --no-grpc
-  --need a,b       capacidades: audio, camera, keyboard, location, push, store, weblogin, window;
-                   substitui as do tune; --need none limpa; keyboard mantem o Gboard no bake --aggressive
-                   (sem ele o texto chega por adb/argent input, mas nao da para testar layout que desvia
-                   do teclado); keyboard, store e window nunca saem do --for
-  --for <dir>      deriva capacidades do package.json do app (tambem substitui as do tune)
-  --reset          plan/tune: ignora o perfil salvo e parte do padrao
-  --json           saida em JSON
+  --lowram         passes -lowram without changing RAM: the requested -memory is honored, but the guest
+                   reports itself as a low-RAM device (changes app behavior); also applies to bake
+  --no-lowram      drops the lowram saved by tune or set by --aggressive; conflicts with --lowram
+  --gpu M          GPU mode (default host)
+  --vulkan         re-enables Vulkan in the guest (no -feature -Vulkan)
+  --screen S       keep (default) or WxH@dpi, e.g. 720x1600@320
+  --port N         even port between 5554 and 5682 (serial emulator-N); gRPC on 8554 + (N - 5554)
+  --no-grpc        launches without -grpc <port> -grpc-use-token (the emulator does not write the running ini
+                   argent uses for screenshot/tap); also applies to bake
+  --grpc           re-enables gRPC when tune saved --no-grpc (overrides the saved profile);
+                   also applies to bake; conflicts with --no-grpc
+  --need a,b       capabilities: audio, camera, keyboard, location, push, store, weblogin, window;
+                   replaces the tune ones; --need none clears them; keyboard keeps Gboard in bake --aggressive
+                   (without it text still arrives via adb/argent input, but you cannot test layouts that move
+                   around the keyboard); keyboard, store and window never come from --for
+  --for <dir>      derives capabilities from the app package.json (also replaces the tune ones)
+  --reset          plan/tune: ignores the saved profile and starts from the defaults
+  --json           JSON output
 
-outras flags:
-  --force          up/bake/ios up: ignora a guarda de um device por vez e a recusa por swap acima de 95%;
-                   down: mata o que nao foi subido pelo devslim; forget: apaga o registro mesmo com o device existindo
-  --idle-down D    android up/ios up: desliga o device depois de D sem app de terceiro em primeiro plano
-                   (30m, 90s, 1h ou minutos; minimo 2m); um processo destacado confere a cada 30 s;
-                   so vale para device que o devslim subiu; nao fica salvo no perfil
-  --aggressive     bake: desliga tambem a lista aggressive (Play Store, assistentes de setup, Gboard)
-  --config-only    restore: so o config.ini; pacotes/settings do guest ficam pendentes no state
-  --image I        create: atalho google_apis, google_atd, aosp_atd, default (vira
-                   system-images;android-<api>;<tag>;<abi>, ABI do host) ou o id completo; padrao google_apis
-                   ATD = sem servicos Google (aosp_atd) ou com servicos reduzidos (google_atd): mais leve;
-                   aosp_atd: sem login Google, push FCM nem compra Play Billing. ATD para teste de UI e
-                   logica; google_apis quando o teste precisa de login, push ou compra
-  --api N          create: API do atalho de imagem (padrao 35); nao combina com id completo
-  --device D       create: padrao pixel_7
+other flags:
+  --force          up/bake/ios up: skips the one-device-at-a-time guard and the refusal at swap above 95%;
+                   down: kills what devslim did not start; forget: deletes the record even if the device exists
+  --idle-down D    android up/ios up: shuts the device down after D with no third-party app in the foreground
+                   (30m, 90s, 1h or minutes; minimum 2m); a detached process checks every 30 s;
+                   only for devices devslim started; not saved in the profile
+  --aggressive     bake: also disables the aggressive list (Play Store, setup wizards, Gboard)
+  --config-only    restore: config.ini only; guest packages/settings stay pending in the state
+  --image I        create: shortcut google_apis, google_atd, aosp_atd, default (becomes
+                   system-images;android-<api>;<tag>;<abi>, host ABI) or the full id; default google_apis
+                   ATD = no Google services (aosp_atd) or reduced services (google_atd): lighter;
+                   aosp_atd: no Google sign-in, FCM push or Play Billing purchases. ATD for UI and
+                   logic tests; google_apis when the test needs sign-in, push or purchases
+  --api N          create: API for the image shortcut (default 35); conflicts with a full id
+  --device D       create: default pixel_7
 
-flags ios (plan/up):
-  --need a,b       capacidades (push, store, weblogin, camera, location religam labels; window abre o Simulator.app;
-                   audio e keyboard nao mudam nada no iOS)
-  --for <dir>      deriva capacidades do package.json do app
-  --except c,c     mantem categorias inteiras ligadas (ver ios categories)
-  --keep l,l       mantem labels avulsos ligados
-  --json           saida em JSON
-  perfil padrao quebra push, StoreKit, universal links e login Apple ID; so iOS 18.5+
+ios flags (plan/up):
+  --need a,b       capabilities (push, store, weblogin, camera, location re-enable labels; window opens Simulator.app;
+                   audio and keyboard change nothing on iOS)
+  --for <dir>      derives capabilities from the app package.json
+  --except c,c     keeps whole categories enabled (see ios categories)
+  --keep l,l       keeps individual labels enabled
+  --json           JSON output
+  the default profile breaks push, StoreKit, universal links and Apple ID sign-in; iOS 18.5+ only
 
-ambiente: ANDROID_HOME/ANDROID_SDK_ROOT (SDK, padrao ~/Library/Android/sdk),
-          ANDROID_AVD_HOME (AVDs), DEVSLIM_HOME (state e logs, padrao ~/.devslim)
+environment: ANDROID_HOME/ANDROID_SDK_ROOT (SDK, default ~/Library/Android/sdk),
+             ANDROID_AVD_HOME (AVDs), DEVSLIM_HOME (state and logs, default ~/.devslim)
 `;
 
 type FlagSpec = Readonly<Record<string, 'value' | 'multi' | 'bool'>>;
@@ -170,15 +170,15 @@ const MEASURE_FLAGS: FlagSpec = Object.freeze({ json: 'bool' });
 const CREATE_FLAGS: FlagSpec = Object.freeze({ image: 'value', api: 'value', device: 'value', json: 'bool' });
 const FORGET_FLAGS: FlagSpec = Object.freeze({ force: 'bool', json: 'bool' });
 
-// Saida do `android forget` / `ios forget`: o que saiu, e o aviso quando o
-// device ainda existe (--force) ou nao deu para conferir.
+// Output of `android forget` / `ios forget`: what was removed, plus a warning when
+// the device still exists (--force) or could not be checked.
 function forgetText(r: ForgetResult): string[] {
-  const kind = r.platform === 'android' ? 'AVD' : 'simulador';
-  const what = r.platform === 'android' ? `AVD ${r.name}` : `simulador ${r.name} (${r.id})`;
-  const lines = [r.removedState ? `state removido: ${r.statePath}` : `state: nenhum (${r.statePath})`];
-  if (r.removedSession.length > 0) lines.push(`sessao: entrada ${r.removedSession.map((e) => e.serial).join(', ')} removida`);
-  if (r.deviceExists === true) lines.push(`${what} ainda existe; so os registros do devslim sairam (--force), o ${kind} nao foi tocado`);
-  else if (r.deviceExists === null) lines.push(`nao deu para conferir se o ${what} existe; so os registros do devslim sairam (--force)`);
+  const kind = r.platform === 'android' ? 'AVD' : 'simulator';
+  const what = r.platform === 'android' ? `AVD ${r.name}` : `simulator ${r.name} (${r.id})`;
+  const lines = [r.removedState ? `state removed: ${r.statePath}` : `state: none (${r.statePath})`];
+  if (r.removedSession.length > 0) lines.push(`session: entry ${r.removedSession.map((e) => e.serial).join(', ')} removed`);
+  if (r.deviceExists === true) lines.push(`${what} still exists; only the devslim records were removed (--force), the ${kind} was not touched`);
+  else if (r.deviceExists === null) lines.push(`could not check whether ${what} exists; only the devslim records were removed (--force)`);
   return lines;
 }
 
@@ -193,9 +193,9 @@ function parseFlags(args: readonly string[], spec: FlagSpec): Parsed {
     const eq = arg.indexOf('=');
     const name = eq === -1 ? arg.slice(2) : arg.slice(2, eq);
     const kind = spec[name];
-    if (kind === undefined) throw new UsageError(`flag desconhecida: --${name}`);
+    if (kind === undefined) throw new UsageError(`unknown flag: --${name}`);
     if (kind === 'bool') {
-      if (eq !== -1) throw new UsageError(`--${name} nao recebe valor`);
+      if (eq !== -1) throw new UsageError(`--${name} takes no value`);
       out.bools.add(name);
       continue;
     }
@@ -203,10 +203,10 @@ function parseFlags(args: readonly string[], spec: FlagSpec): Parsed {
     if (eq !== -1) value = arg.slice(eq + 1);
     else value = args[++i];
     if (value === undefined || value === '' || (eq === -1 && value.startsWith('--'))) {
-      throw new UsageError(`--${name} exige um valor`);
+      throw new UsageError(`--${name} requires a value`);
     }
     if (kind === 'multi') (out.multi[name] ??= []).push(value);
-    else if (name in out.values) throw new UsageError(`--${name} repetida`);
+    else if (name in out.values) throw new UsageError(`--${name} given more than once`);
     else out.values[name] = value;
   }
   return out;
@@ -214,36 +214,36 @@ function parseFlags(args: readonly string[], spec: FlagSpec): Parsed {
 
 function intFlag(name: string, value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
-  if (!/^\d+$/.test(value)) throw new UsageError(`--${name} exige inteiro, recebeu: ${value}`);
+  if (!/^\d+$/.test(value)) throw new UsageError(`--${name} requires an integer, got: ${value}`);
   return Number(value);
 }
 
 function oneAvd(p: Parsed, sub: string): string {
-  if (p.positionals.length === 0) throw new UsageError(`android ${sub}: falta o nome do AVD`);
-  if (p.positionals.length > 1) throw new UsageError(`android ${sub}: argumento extra: ${p.positionals[1]}`);
+  if (p.positionals.length === 0) throw new UsageError(`android ${sub}: missing AVD name`);
+  if (p.positionals.length > 1) throw new UsageError(`android ${sub}: extra argument: ${p.positionals[1]}`);
   return p.positionals[0];
 }
 
-// `--need none` = lista vazia (limpa o que o tune salvou); nao combina com outras.
+// `--need none` = empty list (clears what tune saved); cannot be combined with others.
 function needFlag(p: Parsed): string[] | undefined {
   const need = p.multi.need;
   if (need === undefined) return undefined;
   const list = need.flatMap((v) => v.split(',')).map((s) => s.trim()).filter((s) => s !== '');
   if (!list.includes('none')) return need;
-  if (list.length > 1) throw new UsageError('--need none nao combina com outras capacidades');
+  if (list.length > 1) throw new UsageError('--need none cannot be combined with other capabilities');
   return [];
 }
 
 type ResolvedProfile = { profile: AndroidProfile; inherited: boolean };
 
-// Caminho unico do perfil de plan/tune/up/bake: o do tune (state) como base e
-// as flags dadas sobrepoem; sem state (ou com --reset), parte do padrao.
-// --need e --for SUBSTITUEM as capacidades salvas (nao unem). --grpc e
-// --no-grpc sobrepoem o grpc salvo (o tune --no-grpc grava false). --lowram e
-// --no-lowram sobrepoem o lowram salvo e vencem o lowram do --aggressive.
+// Single profile path for plan/tune/up/bake: the tune profile (state) is the base
+// and the given flags override it; without state (or with --reset), start from defaults.
+// --need and --for REPLACE the saved capabilities (no merge). --grpc and
+// --no-grpc override the saved grpc (tune --no-grpc writes false). --lowram and
+// --no-lowram override the saved lowram and win over the --aggressive lowram.
 function resolveProfile(p: Parsed, io: CliIo, avd: string): ResolvedProfile {
-  if (p.bools.has('grpc') && p.bools.has('no-grpc')) throw new UsageError('--grpc e --no-grpc nao combinam; use so um');
-  if (p.bools.has('lowram') && p.bools.has('no-lowram')) throw new UsageError('--lowram e --no-lowram nao combinam; use so um');
+  if (p.bools.has('grpc') && p.bools.has('no-grpc')) throw new UsageError('--grpc and --no-grpc conflict; use only one');
+  if (p.bools.has('lowram') && p.bools.has('no-lowram')) throw new UsageError('--lowram and --no-lowram conflict; use only one');
   const state = p.bools.has('reset') ? null : loadState<AndroidState>('android', avd, { env: io.env });
   const base = state?.profile;
   const opts: AndroidProfileOptions =
@@ -257,12 +257,12 @@ function resolveProfile(p: Parsed, io: CliIo, avd: string): ResolvedProfile {
           screen: formatScreen(base.screen),
           port: base.port ?? undefined,
           capabilities: base.capabilities ?? [],
-          grpc: base.grpc, // state antigo sem o campo = undefined = ligado
+          grpc: base.grpc, // old state without the field = undefined = on
         };
   if (p.bools.has('aggressive')) {
     opts.aggressive = true;
-    opts.ramMb = undefined; // --aggressive sem --ram = 1536
-    opts.lowRam = undefined; // e lowram, salvo --no-lowram
+    opts.ramMb = undefined; // --aggressive without --ram = 1536
+    opts.lowRam = undefined; // and lowram, unless --no-lowram
   }
   if (p.bools.has('lowram')) opts.lowRam = true;
   if (p.bools.has('no-lowram')) opts.lowRam = false;
@@ -284,7 +284,7 @@ function resolveProfile(p: Parsed, io: CliIo, avd: string): ResolvedProfile {
 }
 
 function describeProfile(pr: AndroidProfile): string {
-  const caps = pr.capabilities.length > 0 ? pr.capabilities.join(',') : '(nenhuma)';
+  const caps = pr.capabilities.length > 0 ? pr.capabilities.join(',') : '(none)';
   const parts = [
     `ram ${pr.ramMb} MB${pr.lowRam ? ' (lowram)' : ''}`,
     `heap ${pr.heapMb} MB`,
@@ -295,30 +295,30 @@ function describeProfile(pr: AndroidProfile): string {
     `screen ${formatScreen(pr.screen)}`,
   ];
   if (pr.port !== null) parts.push(`port ${pr.port}`);
-  parts.push(`capacidades ${caps}`);
+  parts.push(`capabilities ${caps}`);
   return parts.join(', ');
 }
 
 function planText(plan: TunePlan, inherited = false): string[] {
-  const lines = [`AVD ${plan.avd.name} (${plan.avd.dir})`, `perfil: ${describeProfile(plan.profile)}`];
-  if (inherited) lines.push('perfil herdado do tune anterior');
-  lines.push(`config.ini: ${plan.changes.length} mudanca(s)`);
-  for (const c of plan.changes) lines.push(`  ${c.key}: ${c.from ?? '(ausente)'} -> ${c.to}`);
-  // Sem porta no perfil o up escolhe a porta livre na hora; a do gRPC sai dela.
-  const ref = plan.profile.grpc && plan.profile.port === null ? ` (gRPC ${grpcPortFor(GRPC_REFERENCE_PORT)} de referencia; porta definida no up)` : '';
-  lines.push('comando:', `  emulator ${plan.emulatorArgs.join(' ')}${ref}`);
+  const lines = [`AVD ${plan.avd.name} (${plan.avd.dir})`, `profile: ${describeProfile(plan.profile)}`];
+  if (inherited) lines.push('profile inherited from the previous tune');
+  lines.push(`config.ini: ${plan.changes.length} change(s)`);
+  for (const c of plan.changes) lines.push(`  ${c.key}: ${c.from ?? '(absent)'} -> ${c.to}`);
+  // Without a port in the profile, up picks a free port at launch; the gRPC port follows from it.
+  const ref = plan.profile.grpc && plan.profile.port === null ? ` (gRPC ${grpcPortFor(GRPC_REFERENCE_PORT)} for reference; port chosen at up)` : '';
+  lines.push('command:', `  emulator ${plan.emulatorArgs.join(' ')}${ref}`);
   return lines;
 }
 
-// Nota de piso de RAM do plan/tune. Pedido do ultimo boot como no status: o
-// -memory do ultimo up/bake (lastLaunch), senao o do perfil salvo; sem state,
-// o hw.ramSize do config.ini.
+// RAM floor note for plan/tune. Last boot request as in status: the
+// -memory of the last up/bake (lastLaunch), else the saved profile one; without state,
+// the config.ini hw.ramSize.
 function ramNoteFor(avd: AvdInfo, profile: AndroidProfile, io: CliIo): string | null {
   let requested: number | null = null;
   try {
     requested = requestedRamMb(loadState<AndroidState>('android', avd.name, { env: io.env }));
   } catch {
-    requested = null; // state ilegivel: resolveProfile ja teria reclamado se precisasse dele
+    requested = null; // unreadable state: resolveProfile would already have complained if it needed it
   }
   if (requested === null) {
     try {
@@ -330,7 +330,7 @@ function ramNoteFor(avd: AvdInfo, profile: AndroidProfile, io: CliIo): string | 
   return ramFloorNote(profile, lastBootRaise(avd.dir, requested));
 }
 
-// "hardware-qemu.ini, snapshots (812.3 MB)": tamanho so de snapshots/.
+// "hardware-qemu.ini, snapshots (812.3 MB)": size of snapshots/ only.
 function removeList(names: readonly string[], plan: TunePlan): string {
   return names.map((n) => (n === 'snapshots' && plan.snapshotsSize !== null ? `${n} (${sizeText(plan.snapshotsSize)})` : n)).join(', ');
 }
@@ -365,8 +365,8 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     }
     const lines = planText(plan, inherited);
     if (ramNote !== null) lines.push(ramNote);
-    if (plan.wouldRemove.length > 0) lines.push(`tune apagaria: ${removeList(plan.wouldRemove, plan)}`);
-    if (plan.runningLocks.length > 0) lines.push(`aviso: AVD parece estar rodando (${plan.runningLocks.join(', ')}); tune recusaria`);
+    if (plan.wouldRemove.length > 0) lines.push(`tune would delete: ${removeList(plan.wouldRemove, plan)}`);
+    if (plan.runningLocks.length > 0) lines.push(`warning: AVD seems to be running (${plan.runningLocks.join(', ')}); tune would refuse`);
     out(lines);
     return 0;
   }
@@ -375,7 +375,7 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     const p = parseFlags(rest, TUNE_FLAGS);
     const avd = oneAvd(p, sub);
     const { profile, inherited } = resolveProfile(p, io, avd);
-    // Antes do tune: ele apaga o hardware-qemu.ini do ultimo boot.
+    // Before tune: it deletes the hardware-qemu.ini from the last boot.
     const ramNote = ramNoteFor(findAvd(avd, { env: io.env }), profile, io);
     const res = tuneAvd(avd, profile, { env: io.env });
     if (p.bools.has('json')) {
@@ -394,11 +394,11 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     if (ramNote !== null) lines.push(ramNote);
     lines.push(
       res.preservedOriginal
-        ? `state: ${res.statePath} (backup do primeiro tune mantido)`
-        : `state: ${res.statePath} (backup do config.ini original salvo)`,
+        ? `state: ${res.statePath} (first tune backup kept)`
+        : `state: ${res.statePath} (original config.ini backed up)`,
     );
-    lines.push(res.wroteConfig ? 'config.ini reescrito' : 'config.ini ja estava no perfil; nada escrito');
-    lines.push(res.removed.length > 0 ? `removido: ${removeList(res.removed, res)}` : 'removido: nada');
+    lines.push(res.wroteConfig ? 'config.ini rewritten' : 'config.ini already matched the profile; nothing written');
+    lines.push(res.removed.length > 0 ? `removed: ${removeList(res.removed, res)}` : 'removed: nothing');
     out(lines);
     return 0;
   }
@@ -407,7 +407,7 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     const p = parseFlags(rest, RESTORE_FLAGS);
     const avd = oneAvd(p, sub);
     const res = await restoreAvd(avd, { ...rtx(io), configOnly: p.bools.has('config-only') });
-    for (const w of res.warnings) io.stderr(`devslim: aviso: ${w}\n`);
+    for (const w of res.warnings) io.stderr(`devslim: warning: ${w}\n`);
     if (p.bools.has('json')) {
       json({
         avd: res.avd.name,
@@ -424,11 +424,11 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     }
     const lines: string[] = [];
     if (res.unslim !== null) {
-      lines.push(`guest: ${res.unslim.enabled.length} pacote(s) reabilitado(s), ${res.unslim.restoredSettings.length} setting(s) devolvido(s); emulador desligado`);
+      lines.push(`guest: ${res.unslim.enabled.length} package(s) re-enabled, ${res.unslim.restoredSettings.length} setting(s) restored; emulator shut down`);
     }
-    lines.push(`config.ini de ${res.avd.name} restaurado (${res.bytes} bytes, sha256 ${res.sha256})`);
-    if (res.removedSnapshot) lines.push('snapshot slim_base removido');
-    lines.push(res.clearedState ? `state removido: ${res.statePath}` : `state mantido (pendencia no guest): ${res.statePath}`);
+    lines.push(`config.ini of ${res.avd.name} restored (${res.bytes} bytes, sha256 ${res.sha256})`);
+    if (res.removedSnapshot) lines.push('slim_base snapshot removed');
+    lines.push(res.clearedState ? `state removed: ${res.statePath}` : `state kept (guest changes pending): ${res.statePath}`);
     out(lines);
     return 0;
   }
@@ -438,21 +438,21 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     const name = oneAvd(p, sub);
     const api = intFlag('api', p.values.api);
     if (api !== undefined && p.values.image?.startsWith('system-images;')) {
-      throw new UsageError(`--api so vale com atalho de imagem (${IMAGE_SHORTCUTS.join(', ')}); o id completo ja traz a API`);
+      throw new UsageError(`--api only applies to an image shortcut (${IMAGE_SHORTCUTS.join(', ')}); the full id already includes the API`);
     }
     const res = await createAvd(name, { ...rtx(io), image: p.values.image, api, device: p.values.device });
     if (p.bools.has('json')) {
       json({ avd: res.avd, image: res.image, device: res.device, ...planJson(res.tune), statePath: res.tune.statePath });
       return 0;
     }
-    out([`AVD ${res.avd} criado (${res.image}, ${res.device}); nao bootado`, ...planText(res.tune), `state: ${res.tune.statePath}`]);
+    out([`AVD ${res.avd} created (${res.image}, ${res.device}); not booted`, ...planText(res.tune), `state: ${res.tune.statePath}`]);
     return 0;
   }
 
   if (sub === 'up') {
     const p = parseFlags(rest, UP_FLAGS);
     const avd = oneAvd(p, sub);
-    const idleMs = idleDownFlag(p); // erro de uso antes de bootar
+    const idleMs = idleDownFlag(p); // usage error before booting
     const res = await upAvd(avd, resolveProfile(p, io, avd).profile, { ...rtx(io), force: p.bools.has('force') });
     const idle = idleMs === undefined ? undefined : await attachIdleDown('android', res.avd, idleMs, `AVD ${res.avd}`, io);
     if (p.bools.has('json')) {
@@ -461,11 +461,11 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     }
     const lines: string[] = [];
     if (res.alreadyRunning) {
-      lines.push(`AVD ${res.avd} ja estava rodando em ${res.serial} (pid ${res.pid ?? '?'}); nada subido`);
+      lines.push(`AVD ${res.avd} was already running on ${res.serial} (pid ${res.pid ?? '?'}); nothing started`);
     } else {
       lines.push(
-        `AVD ${res.avd} pronto em ${res.serial} (pid ${res.pid}, ${res.fromSnapshot ? 'snapshot slim_base' : 'cold boot sem snapshot'}, boot ${secs(res.bootMs ?? 0)})`,
-        `comando: emulator ${res.emulatorArgs.join(' ')}`,
+        `AVD ${res.avd} ready on ${res.serial} (pid ${res.pid}, ${res.fromSnapshot ? 'slim_base snapshot' : 'cold boot without snapshot'}, boot ${secs(res.bootMs ?? 0)})`,
+        `command: emulator ${res.emulatorArgs.join(' ')}`,
         `log: ${res.logFile}`,
       );
       if (res.hint !== undefined) lines.push(res.hint);
@@ -478,7 +478,7 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
   if (sub === 'bake') {
     const p = parseFlags(rest, BAKE_FLAGS);
     const avd = oneAvd(p, sub);
-    // --aggressive no bake e o nivel da lista de bloat; RAM continua a do tune.
+    // --aggressive in bake is the bloat list level; RAM stays the tune one.
     const forProfile: Parsed = { ...p, bools: new Set([...p.bools].filter((b) => b !== 'aggressive')) };
     const res = await bakeAvd(avd, resolveProfile(forProfile, io, avd).profile, {
       ...rtx(io),
@@ -495,13 +495,13 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
 
   if (sub === 'down') {
     const p = parseFlags(rest, DOWN_FLAGS);
-    if (p.positionals.length > 1) throw new UsageError(`android down: argumento extra: ${p.positionals[1]}`);
+    if (p.positionals.length > 1) throw new UsageError(`android down: extra argument: ${p.positionals[1]}`);
     const res = await downAvd(p.positionals[0], { ...rtx(io), force: p.bools.has('force') });
     if (p.bools.has('json')) {
       json(res);
       return res.some((r) => r.result === 'failed') ? 1 : 0;
     }
-    if (res.length === 0) out(['nada a desligar (sessao vazia)']);
+    if (res.length === 0) out(['nothing to shut down (empty session)']);
     else out(res.map((r) => `${r.avd} ${r.serial}: ${r.result}${r.detail ? ` (${r.detail})` : ''}`));
     return res.some((r) => r.result === 'failed') ? 1 : 0;
   }
@@ -526,7 +526,7 @@ async function runAndroid(args: readonly string[], io: CliIo): Promise<number> {
     return 0;
   }
 
-  throw new UsageError(sub === undefined ? 'android: falta o subcomando' : `android: subcomando desconhecido: ${sub}`);
+  throw new UsageError(sub === undefined ? 'android: missing subcommand' : `android: unknown subcommand: ${sub}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -536,12 +536,12 @@ const IOS_PROFILE_FLAGS: FlagSpec = Object.freeze({ need: 'multi', for: 'value',
 const IOS_UP_FLAGS: FlagSpec = Object.freeze({ ...IOS_PROFILE_FLAGS, force: 'bool', 'idle-down': 'value' });
 const JSON_ONLY: FlagSpec = Object.freeze({ json: 'bool' });
 
-// Exit code do `ios up`/`ios off` quando algum label nao ficou no valor pedido.
+// Exit code of `ios up`/`ios off` when some label did not end up at the requested value.
 export const EXIT_NOT_APPLIED = 3;
 
 function oneSim(p: Parsed, sub: string): string {
-  if (p.positionals.length === 0) throw new UsageError(`ios ${sub}: falta o UDID ou nome do simulador`);
-  if (p.positionals.length > 1) throw new UsageError(`ios ${sub}: argumento extra: ${p.positionals[1]}`);
+  if (p.positionals.length === 0) throw new UsageError(`ios ${sub}: missing simulator UDID or name`);
+  if (p.positionals.length > 1) throw new UsageError(`ios ${sub}: extra argument: ${p.positionals[1]}`);
   return p.positionals[0];
 }
 
@@ -568,37 +568,37 @@ const listOr = (list: readonly string[], none: string) => (list.length > 0 ? lis
 function simPlanText(plan: SimPlan): string[] {
   const pr = plan.profile;
   return [
-    `simulador ${plan.name} (${plan.udid}), ${plan.runtime.platform} ${plan.runtime.version}, estado ${plan.state}`,
-    `perfil: capacidades ${listOr(pr.capabilities, '(nenhuma)')}, except ${listOr(pr.except, '(nenhuma)')}, keep ${listOr(pr.keep, '(nenhum)')}`,
-    `labels a desligar: ${plan.labels.length} de ${plan.managedTotal} geridos; ${plan.alreadyInStore} ja desligados no store`,
-    `reparo (sempre ligados que o store traz desligados): ${listOr(plan.repair, '(nenhum)')}`,
-    `store: ${plan.storePath} (${plan.storeExists ? 'existe' : 'ausente'})`,
-    plan.hasState ? 'state: existe (backup do primeiro up sera mantido)' : 'state: nenhum',
+    `simulator ${plan.name} (${plan.udid}), ${plan.runtime.platform} ${plan.runtime.version}, state ${plan.state}`,
+    `profile: capabilities ${listOr(pr.capabilities, '(none)')}, except ${listOr(pr.except, '(none)')}, keep ${listOr(pr.keep, '(none)')}`,
+    `labels to disable: ${plan.labels.length} of ${plan.managedTotal} managed; ${plan.alreadyInStore} already disabled in the store`,
+    `repair (always-enabled labels the store has disabled): ${listOr(plan.repair, '(none)')}`,
+    `store: ${plan.storePath} (${plan.storeExists ? 'exists' : 'absent'})`,
+    plan.hasState ? 'state: exists (first up backup will be kept)' : 'state: none',
   ];
 }
 
 function upSimText(r: UpSimResult): string[] {
   if (r.alreadySlim) {
-    return [`${r.name} (${r.udid}) ja estava bootado e enxuto (${r.labels} labels); nada feito${r.windowOpened ? '; Simulator.app aberto' : ''}`];
+    return [`${r.name} (${r.udid}) was already booted and slim (${r.labels} labels); nothing done${r.windowOpened ? '; Simulator.app opened' : ''}`];
   }
   const lines = [
-    `${r.name} (${r.udid}) ${r.runtime.platform} ${r.runtime.version}: ${r.labels} labels no perfil, ${r.storeChanges} entrada(s) do store mudaram${r.shutdownFirst ? ' (desligado antes de escrever)' : ''}`,
+    `${r.name} (${r.udid}) ${r.runtime.platform} ${r.runtime.version}: ${r.labels} labels in the profile, ${r.storeChanges} store entry(ies) changed${r.shutdownFirst ? ' (shut down before writing)' : ''}`,
     `boot ${secs(r.bootMs ?? 0)}`,
   ];
-  if (r.restored.length > 0) lines.push(`religados ao valor salvo (${r.restored.length}): ${r.restored.join(', ')}`);
-  if (r.repaired.length > 0) lines.push(`reparados (sempre ligados que estavam desligados no store): ${r.repaired.join(', ')}`);
+  if (r.restored.length > 0) lines.push(`restored to saved value (${r.restored.length}): ${r.restored.join(', ')}`);
+  if (r.repaired.length > 0) lines.push(`repaired (always-enabled labels that were disabled in the store): ${r.repaired.join(', ')}`);
   if (r.fallback.used) {
-    lines.push(`store offline nao pegou tudo: launchctl em ${r.fallback.passes} passada(s) e reboot${r.fallback.failed.length > 0 ? `; launchctl falhou em: ${r.fallback.failed.join(', ')}` : ''}`);
+    lines.push(`offline store did not catch everything: launchctl in ${r.fallback.passes} pass(es) and reboot${r.fallback.failed.length > 0 ? `; launchctl failed on: ${r.fallback.failed.join(', ')}` : ''}`);
   }
-  if (r.notApplied.length > 0) lines.push(`NAO desligados (${r.notApplied.length}): ${r.notApplied.join(', ')}`);
-  if (r.notRestored.length > 0) lines.push(`NAO religados (${r.notRestored.length}): ${r.notRestored.join(', ')}`);
-  if (r.windowOpened) lines.push('Simulator.app aberto');
+  if (r.notApplied.length > 0) lines.push(`NOT disabled (${r.notApplied.length}): ${r.notApplied.join(', ')}`);
+  if (r.notRestored.length > 0) lines.push(`NOT re-enabled (${r.notRestored.length}): ${r.notRestored.join(', ')}`);
+  if (r.windowOpened) lines.push('Simulator.app opened');
   lines.push(`state: ${r.statePath}`);
   return lines;
 }
 
 function measureSimText(m: IosMeasurement): string[] {
-  return [`${m.name} (${m.udid}) em ${m.at}: ${m.processes} processos, footprint ${m.footprintMb} MB, cpu ${m.cpuPercent}%`];
+  return [`${m.name} (${m.udid}) at ${m.at}: ${m.processes} processes, footprint ${m.footprintMb} MB, cpu ${m.cpuPercent}%`];
 }
 
 function categoriesData() {
@@ -617,15 +617,15 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
 
   if (sub === 'categories') {
     const p = parseFlags(rest, JSON_ONLY);
-    if (p.positionals.length > 0) throw new UsageError(`ios categories: argumento extra: ${p.positionals[0]}`);
+    if (p.positionals.length > 0) throw new UsageError(`ios categories: extra argument: ${p.positionals[0]}`);
     const data = categoriesData();
     if (p.bools.has('json')) {
       json(data);
       return 0;
     }
     const w = Math.max(...CATEGORY_IDS.map((id) => id.length));
-    const lines = data.categories.map((c) => `${c.id.padEnd(w)}  ${String(c.count).padStart(2)} labels  quebra: ${c.breaks}`);
-    lines.push(`total gerido: ${data.managedTotal} labels unicos (categorias se sobrepoem); nunca desligados: ${data.alwaysEnabled.join(', ')}`);
+    const lines = data.categories.map((c) => `${c.id.padEnd(w)}  ${String(c.count).padStart(2)} labels  breaks: ${c.breaks}`);
+    lines.push(`total managed: ${data.managedTotal} unique labels (categories overlap); never disabled: ${data.alwaysEnabled.join(', ')}`);
     out(lines);
     return 0;
   }
@@ -641,12 +641,12 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
   if (sub === 'up') {
     const p = parseFlags(rest, IOS_UP_FLAGS);
     const query = oneSim(p, sub);
-    const idleMs = idleDownFlag(p); // erro de uso antes de bootar
+    const idleMs = idleDownFlag(p); // usage error before booting
     const r = await upSim(query, iosOptions(p, io), { ...iosCtx(io), force: p.bools.has('force') });
     const idle =
       idleMs === undefined
         ? undefined
-        : await attachIdleDown('ios', r.udid, idleMs, `simulador ${r.name} (${r.udid})`, io, r.alreadySlim ? IOS_ALREADY_SLIM_REASON : undefined);
+        : await attachIdleDown('ios', r.udid, idleMs, `simulator ${r.name} (${r.udid})`, io, r.alreadySlim ? IOS_ALREADY_SLIM_REASON : undefined);
     if (p.bools.has('json')) json(idle === undefined ? r : { ...r, idleDown: idle });
     else out(idle == null ? upSimText(r) : [...upSimText(r), idleUpLine(idle)]);
     return r.notApplied.length > 0 || r.notRestored.length > 0 ? EXIT_NOT_APPLIED : 0;
@@ -657,10 +657,10 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
     const r = await offSim(oneSim(p, sub), iosCtx(io));
     if (p.bools.has('json')) json(r);
     else {
-      const lines = [`${r.name} (${r.udid}): ${r.restored} label(s) devolvido(s) ao valor salvo; state removido (${r.statePath})`];
-      lines.push(r.rebooted ? 'simulador rebootado' : 'simulador estava desligado; nao bootado');
-      if (r.ignored.length > 0) lines.push(`ignorados (fora da lista gerida): ${r.ignored.join(', ')}`);
-      if (r.notRestored.length > 0) lines.push(`NAO voltaram ao valor salvo (${r.notRestored.length}): ${r.notRestored.join(', ')}`);
+      const lines = [`${r.name} (${r.udid}): ${r.restored} label(s) returned to saved value; state removed (${r.statePath})`];
+      lines.push(r.rebooted ? 'simulator rebooted' : 'simulator was shut down; not booted');
+      if (r.ignored.length > 0) lines.push(`ignored (outside the managed list): ${r.ignored.join(', ')}`);
+      if (r.notRestored.length > 0) lines.push(`NOT returned to saved value (${r.notRestored.length}): ${r.notRestored.join(', ')}`);
       out(lines);
     }
     return r.notRestored.length > 0 ? EXIT_NOT_APPLIED : 0;
@@ -668,10 +668,10 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
 
   if (sub === 'down') {
     const p = parseFlags(rest, Object.freeze({ force: 'bool', json: 'bool' }));
-    if (p.positionals.length > 1) throw new UsageError(`ios down: argumento extra: ${p.positionals[1]}`);
+    if (p.positionals.length > 1) throw new UsageError(`ios down: extra argument: ${p.positionals[1]}`);
     const res = await downSim(p.positionals[0], { ...iosCtx(io), force: p.bools.has('force') });
     if (p.bools.has('json')) json(res);
-    else if (res.length === 0) out(['nada a desligar (sessao vazia)']);
+    else if (res.length === 0) out(['nothing to shut down (empty session)']);
     else out(res.map((r) => `${r.name} ${r.udid}: ${r.result}${r.detail ? ` (${r.detail})` : ''}`));
     return res.some((r) => r.result === 'failed') ? 1 : 0;
   }
@@ -692,24 +692,24 @@ async function runIos(args: readonly string[], io: CliIo): Promise<number> {
     return 0;
   }
 
-  throw new UsageError(sub === undefined ? 'ios: falta o subcomando' : `ios: subcomando desconhecido: ${sub}`);
+  throw new UsageError(sub === undefined ? 'ios: missing subcommand' : `ios: unknown subcommand: ${sub}`);
 }
 
 // ---------------------------------------------------------------------------
-// comandos de topo
+// top-level commands
 
 const TOP_DOWN_FLAGS: FlagSpec = Object.freeze({ force: 'bool', json: 'bool' });
 
 function pruneLine(r: PruneOutcome): string {
-  const idle = r.idleDown === null ? '' : `; registro do auto-desligar (watcher pid ${r.idleDown.watcherPid}) junto`;
-  return `removido da sessao: ${r.platform} ${r.name} ${r.id} (${r.detail})${idle}`;
+  const idle = r.idleDown === null ? '' : `; idle-down record (watcher pid ${r.idleDown.watcherPid}) removed too`;
+  return `removed from session: ${r.platform} ${r.name} ${r.id} (${r.detail})${idle}`;
 }
 
 async function runTop(cmd: 'status' | 'doctor' | 'down' | 'prune' | 'measure', args: readonly string[], io: CliIo): Promise<number> {
   const out = (lines: string[]) => io.stdout(lines.join('\n') + '\n');
   const json = (obj: unknown) => io.stdout(JSON.stringify(obj, null, 2) + '\n');
   const p = parseFlags(args, cmd === 'down' ? TOP_DOWN_FLAGS : JSON_ONLY);
-  if (p.positionals.length > 0) throw new UsageError(`${cmd}: argumento extra: ${p.positionals[0]}`);
+  if (p.positionals.length > 0) throw new UsageError(`${cmd}: extra argument: ${p.positionals[0]}`);
   const asJson = p.bools.has('json');
 
   if (cmd === 'status') {
@@ -727,35 +727,35 @@ async function runTop(cmd: 'status' | 'doctor' | 'down' | 'prune' | 'measure', a
   if (cmd === 'prune') {
     const res = await pruneSession(iosCtx(io));
     if (asJson) json({ removed: res });
-    else out(res.length === 0 ? ['nada a limpar'] : res.map(pruneLine));
+    else out(res.length === 0 ? ['nothing to clean up'] : res.map(pruneLine));
     return 0;
   }
   if (cmd === 'down') {
     const res = await downAll({ ...iosCtx(io), force: p.bools.has('force') });
-    // Plataforma pulada ja saiu em stderr; no texto ficam so os devices.
+    // A skipped platform was already reported on stderr; the text lists only devices.
     const done = res.filter((r) => r.result !== 'skipped');
     if (asJson) json(res);
-    else if (res.length === 0) out(['nada a desligar (sessao vazia)']);
-    else if (done.length === 0) out(['nada a desligar']);
+    else if (res.length === 0) out(['nothing to shut down (empty session)']);
+    else if (done.length === 0) out(['nothing to shut down']);
     else out(done.map((r) => `${r.platform} ${r.name} ${r.id}: ${r.result}${r.detail ? ` (${r.detail})` : ''}`));
     return res.some((r) => r.result === 'failed') ? 1 : 0;
   }
   const res = await measureAll(iosCtx(io));
   if (asJson) json(res);
-  else if (res.length === 0) out(['nada rodando']);
+  else if (res.length === 0) out(['nothing running']);
   else out(res.flatMap((m) => (m.platform === 'android' ? measureText(m) : measureSimText(m))));
   return 0;
 }
 
 // ---------------------------------------------------------------------------
-// auto-desligar
+// idle-down
 
 function idleDownFlag(p: Parsed): number | undefined {
   const v = p.values['idle-down'];
   return v === undefined ? undefined : parseIdleDuration(v);
 }
 
-// Sobe o watcher para o device da sessao; fora da sessao = aviso e null.
+// Starts the watcher for the session device; outside the session = warning and null.
 async function attachIdleDown(
   platform: 'android' | 'ios',
   id: string,
@@ -771,14 +771,14 @@ async function attachIdleDown(
 
 const IDLE_WATCH_FLAGS: FlagSpec = Object.freeze({ 'idle-ms': 'value' });
 
-// Subcomando interno (fora do --help): o processo destacado do auto-desligar.
+// Internal subcommand (not in --help): the detached idle-down process.
 async function runIdleWatchCmd(args: readonly string[], io: CliIo): Promise<number> {
   const p = parseFlags(args, IDLE_WATCH_FLAGS);
   const [platform, id, extra] = p.positionals;
-  if (platform !== 'android' && platform !== 'ios') throw new UsageError(`${IDLE_WATCH_CMD}: plataforma invalida: ${platform ?? '(ausente)'}`);
-  if (id === undefined || extra !== undefined) throw new UsageError(`${IDLE_WATCH_CMD}: uso: ${IDLE_WATCH_CMD} <android|ios> <id> --idle-ms <n>`);
+  if (platform !== 'android' && platform !== 'ios') throw new UsageError(`${IDLE_WATCH_CMD}: invalid platform: ${platform ?? '(absent)'}`);
+  if (id === undefined || extra !== undefined) throw new UsageError(`${IDLE_WATCH_CMD}: usage: ${IDLE_WATCH_CMD} <android|ios> <id> --idle-ms <n>`);
   const ms = intFlag('idle-ms', p.values['idle-ms']);
-  if (ms === undefined || ms < IDLE_MIN_MS) throw new UsageError(`${IDLE_WATCH_CMD}: --idle-ms exige inteiro >= ${IDLE_MIN_MS}`);
+  if (ms === undefined || ms < IDLE_MIN_MS) throw new UsageError(`${IDLE_WATCH_CMD}: --idle-ms requires an integer >= ${IDLE_MIN_MS}`);
   const res = await runIdleWatch(platform, id, ms, { ...rtx(io), log: io.stdout });
   return res.reason === 'probe-failed' || res.reason === 'shutdown-failed' ? 1 : 0;
 }
@@ -795,31 +795,31 @@ function bakeText(r: BakeResult): string[] {
   const s = r.slim;
   const set = s.settings.filter((x) => x.status === 'set').length;
   const lines = [
-    `bake de ${r.avd} em ${r.serial} (nivel ${r.level})`,
-    `comando: emulator ${r.emulatorArgs.join(' ')}`,
-    `settings: ${set} alterado(s)`,
+    `bake of ${r.avd} on ${r.serial} (level ${r.level})`,
+    `command: emulator ${r.emulatorArgs.join(' ')}`,
+    `settings: ${set} changed`,
   ];
   for (const x of s.settings.filter((y) => y.status !== 'set')) lines.push(`  ${x.ns}/${x.key}: ${x.status}${x.note ? ` (${x.note})` : ''}`);
-  lines.push(`pacotes: ${s.newlyDisabled.length} desligado(s) agora, ${s.disabledPackages.length} nossos no state, ${s.alreadyDisabled.length} ja desligado(s) antes (fora do state)`);
-  if (s.reenabled.length > 0) lines.push(`  religados (sairam do plano): ${s.reenabled.join(', ')}`);
-  for (const f of s.failedPackages) lines.push(`  falhou: ${f.pkg} (${f.error})`);
-  if (s.packagesError !== null) lines.push(`  pacotes nao processados: ${s.packagesError}`);
-  lines.push(`dexopt: ${s.dexopt.ok ? 'ok' : `falhou (${s.dexopt.detail})`}`);
-  lines.push(`am kill-all: ${s.killAll.ok ? 'ok' : `falhou (${s.killAll.detail})`}`);
-  lines.push(`snapshot ${r.snapshot} gravado; emulador desligado`);
-  if (r.lingeringLocks.length > 0) lines.push(`aviso: locks ainda presentes: ${r.lingeringLocks.join(', ')}`);
+  lines.push(`packages: ${s.newlyDisabled.length} disabled now, ${s.disabledPackages.length} ours in the state, ${s.alreadyDisabled.length} already disabled before (not in the state)`);
+  if (s.reenabled.length > 0) lines.push(`  re-enabled (dropped from the plan): ${s.reenabled.join(', ')}`);
+  for (const f of s.failedPackages) lines.push(`  failed: ${f.pkg} (${f.error})`);
+  if (s.packagesError !== null) lines.push(`  packages not processed: ${s.packagesError}`);
+  lines.push(`dexopt: ${s.dexopt.ok ? 'ok' : `failed (${s.dexopt.detail})`}`);
+  lines.push(`am kill-all: ${s.killAll.ok ? 'ok' : `failed (${s.killAll.detail})`}`);
+  lines.push(`snapshot ${r.snapshot} saved; emulator shut down`);
+  if (r.lingeringLocks.length > 0) lines.push(`warning: locks still present: ${r.lingeringLocks.join(', ')}`);
   const t = r.timings;
-  lines.push(`tempos: boot ${secs(t.bootMs)}, slim ${secs(t.slimMs)}, snapshot ${secs(t.snapshotMs)}, desligar ${secs(t.shutdownMs)}, total ${secs(t.totalMs)}`);
+  lines.push(`timings: boot ${secs(t.bootMs)}, slim ${secs(t.slimMs)}, snapshot ${secs(t.snapshotMs)}, shutdown ${secs(t.shutdownMs)}, total ${secs(t.totalMs)}`);
   lines.push(`state: ${r.statePath}`, `log: ${r.logFile}`);
   return lines;
 }
 
 function measureText(m: AndroidMeasurement): string[] {
-  const v = (n: number | null, unit = ' MB') => (n === null ? 'n/d' : `${n}${unit}`);
+  const v = (n: number | null, unit = ' MB') => (n === null ? 'n/a' : `${n}${unit}`);
   return [
-    `${m.avd} (${m.serial}, pid ${m.pid ?? 'n/d'}) em ${m.at}`,
-    `host: phys_footprint ${v(m.host.footprintMb)}, footprint (cabecalho) ${v(m.host.footprintHeaderMb)}, rss ${v(m.host.rssMb)}`,
-    `guest: MemTotal ${v(m.guest.memTotalMb)}, MemAvailable ${v(m.guest.memAvailableMb)}, processos ${v(m.guest.processes, '')}`,
+    `${m.avd} (${m.serial}, pid ${m.pid ?? 'n/a'}) at ${m.at}`,
+    `host: phys_footprint ${v(m.host.footprintMb)}, footprint (header) ${v(m.host.footprintHeaderMb)}, rss ${v(m.host.rssMb)}`,
+    `guest: MemTotal ${v(m.guest.memTotalMb)}, MemAvailable ${v(m.guest.memAvailableMb)}, processes ${v(m.guest.processes, '')}`,
     `guest dumpsys: Used RAM ${v(m.guest.usedRamMb)}, Free RAM ${v(m.guest.freeRamMb)}`,
   ];
 }
@@ -833,7 +833,7 @@ function defaultIo(): CliIo {
   };
 }
 
-// Retorna o exit code. Erro esperado = uma linha em stderr, sem stack.
+// Returns the exit code. Expected error = one line on stderr, no stack.
 export async function main(argv: readonly string[], io: CliIo = defaultIo()): Promise<number> {
   try {
     const [cmd, ...rest] = argv;
@@ -849,7 +849,7 @@ export async function main(argv: readonly string[], io: CliIo = defaultIo()): Pr
     if (cmd === 'android') return await runAndroid(rest, io);
     if (cmd === 'ios') return await runIos(rest, io);
     if (cmd === IDLE_WATCH_CMD) return await runIdleWatchCmd(rest, io);
-    throw new UsageError(cmd === undefined ? 'falta o comando' : `comando desconhecido: ${cmd}`);
+    throw new UsageError(cmd === undefined ? 'missing command' : `unknown command: ${cmd}`);
   } catch (err) {
     if (err instanceof DevslimError) {
       io.stderr(`devslim: ${err.message}\n`);
@@ -857,7 +857,7 @@ export async function main(argv: readonly string[], io: CliIo = defaultIo()): Pr
       return err.exitCode;
     }
     const e = err as Error;
-    io.stderr(`devslim: erro inesperado: ${e?.message ?? String(err)}\n`);
+    io.stderr(`devslim: unexpected error: ${e?.message ?? String(err)}\n`);
     if (io.env.DEVSLIM_DEBUG) io.stderr(`${e?.stack ?? ''}\n`);
     return 1;
   }

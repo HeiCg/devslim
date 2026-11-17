@@ -22,11 +22,11 @@ import { DEFAULT_API, imageTag, isAtdTag, isGoogleApisTag } from './android/imag
 import { formatDuration } from './idle.ts';
 import { androidOrphans, iosOrphans } from './orphans.ts';
 
-// `devslim doctor`: so leitura. Nunca chama adb, nunca executa o argent,
-// nunca apaga nada. Checagens por AVD/device: avd-gpu e avd-ram dao uma linha
-// por AVD (ultimo boot); profile-drift, avd-image, running-off-profile, emulator-advertised,
-// default-boot-snapshot, orphan-images, ios-always-enabled e orphan-state dao
-// uma linha por ocorrencia (ou um unico ok).
+// `devslim doctor`: read-only. Never calls adb, never runs argent,
+// never deletes anything. Per-AVD/device checks: avd-gpu and avd-ram give one line
+// per AVD (last boot); profile-drift, avd-image, running-off-profile, emulator-advertised,
+// default-boot-snapshot, orphan-images, ios-always-enabled and orphan-state give
+// one line per occurrence (or a single ok).
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 export type Check = Readonly<{ id: string; level: CheckLevel; message: string; fix?: string }>;
@@ -35,17 +35,17 @@ export type DoctorContext = IosContext & { nodeVersion?: string };
 
 export const MIN_NODE_MAJOR = 25;
 export const MIN_EMULATOR_REVISION = Object.freeze([37, 2, 13] as const);
-// Fonte unica em hardwareQemu.ts (tambem usada por status e up).
+// Single source in hardwareQemu.ts (also used by status and up).
 export { SOFTWARE_GPU_MODES, isSoftwareGpu } from './android/hardwareQemu.ts';
 export const RAM_WARN_MB = 3072;
-// Limites de swap: fonte unica em swap.ts (os mesmos do up/bake/ios up).
+// Swap thresholds: single source in swap.ts (the same as up/bake/ios up).
 export { SWAP_WARN_PERCENT, SWAP_FAIL_PERCENT } from './swap.ts';
 
 const check = (id: string, level: CheckLevel, message: string, fix?: string): Check =>
   Object.freeze(fix === undefined ? { id, level, message } : { id, level, message, fix });
 
 
-// Tamanho de diretorio: movido para dirSize.ts (tambem usado pelo plan/tune).
+// Directory size: moved to dirSize.ts (also used by plan/tune).
 export { dirSize, type DirSize } from './dirSize.ts';
 
 // ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ function avds(env: Runtime['env']): AvdInfo[] {
     try {
       out.push(findAvd(name, { env }));
     } catch {
-      // .ini sem diretorio: nao ha o que checar
+      // .ini without a directory: nothing to check
     }
   }
   return out;
@@ -82,21 +82,21 @@ function onPath(cmd: string, env: Runtime['env']): string | null {
       accessSync(p, constants.X_OK);
       return p;
     } catch {
-      // proximo
+      // next
     }
   }
   return null;
 }
 
 // ---------------------------------------------------------------------------
-// checagens
+// checks
 
 function checkNode(version: string): Check {
   const v = version.replace(/^v/, '');
   const major = Number(v.split('.')[0]);
   return Number.isFinite(major) && major >= MIN_NODE_MAJOR
     ? check('node', 'ok', `node ${v}`)
-    : check('node', 'fail', `node ${v}: devslim exige ${MIN_NODE_MAJOR} ou mais novo (type stripping nativo)`, `instale node ${MIN_NODE_MAJOR}+`);
+    : check('node', 'fail', `node ${v}: devslim requires ${MIN_NODE_MAJOR} or newer (native type stripping)`, `install node ${MIN_NODE_MAJOR}+`);
 }
 
 async function checkXcode(rt: Runtime): Promise<Check> {
@@ -106,7 +106,7 @@ async function checkXcode(rt: Runtime): Promise<Check> {
     if (res.code !== 0) throw new Error(res.stderr.trim());
     xcode = res.stdout.split(/\r?\n/)[0].trim() || 'Xcode';
   } catch {
-    return check('xcode', 'warn', 'xcodebuild -version nao respondeu: sem Xcode, devslim ios fica indisponivel', 'instale o Xcode e rode sudo xcode-select -s /Applications/Xcode.app');
+    return check('xcode', 'warn', 'xcodebuild -version did not respond: without Xcode, devslim ios is unavailable', 'install Xcode and run sudo xcode-select -s /Applications/Xcode.app');
   }
   let runtimes;
   try {
@@ -114,63 +114,63 @@ async function checkXcode(rt: Runtime): Promise<Check> {
     if (res.code !== 0) throw new Error((res.stderr || res.stdout).trim());
     runtimes = parseRuntimesJson(res.stdout);
   } catch (err) {
-    return check('xcode', 'fail', `${xcode}, mas xcrun simctl list runtimes -j falhou (${(err as Error).message || 'sem saida'})`, 'sudo xcode-select -s /Applications/Xcode.app');
+    return check('xcode', 'fail', `${xcode}, but xcrun simctl list runtimes -j failed (${(err as Error).message || 'no output'})`, 'sudo xcode-select -s /Applications/Xcode.app');
   }
   const ios = runtimes.filter((r) => r.platform === 'iOS' && r.isAvailable && /^\d+(\.\d+)*$/.test(r.version));
   const good = ios.filter((r) => compareVersion(r.version, MIN_IOS_VERSION) >= 0).map((r) => r.version);
   const min = MIN_IOS_VERSION.join('.');
   if (good.length > 0) return check('xcode', 'ok', `${xcode}; runtime iOS ${good.join(', ')}`);
-  if (ios.length === 0) return check('xcode', 'warn', `${xcode}, sem runtime iOS instalado`, 'Xcode > Settings > Components: instale um runtime iOS');
-  return check('xcode', 'warn', `${xcode}; so runtime iOS antigo (${ios.map((r) => r.version).join(', ')}); devslim ios exige ${min}+`, `instale um runtime iOS ${min} ou mais novo`);
+  if (ios.length === 0) return check('xcode', 'warn', `${xcode}, no iOS runtime installed`, 'Xcode > Settings > Components: install an iOS runtime');
+  return check('xcode', 'warn', `${xcode}; only old iOS runtimes (${ios.map((r) => r.version).join(', ')}); devslim ios requires ${min}+`, `install an iOS runtime ${min} or newer`);
 }
 
 const TOOLS: readonly SdkTool[] = Object.freeze(['emulator', 'adb', 'avdmanager']);
 
 function checkAndroidSdk(env: Runtime['env'], root: string | null): Check {
   if (root === null) {
-    return check('android-sdk', 'warn', `SDK Android nao encontrado (procurado em ${sdkCandidates(env).join(', ')}); devslim android fica indisponivel`, 'defina ANDROID_HOME');
+    return check('android-sdk', 'warn', `Android SDK not found (looked in ${sdkCandidates(env).join(', ')}); devslim android is unavailable`, 'set ANDROID_HOME');
   }
   const missing = TOOLS.filter((t) => !existsSync(sdkToolPath(root, t)));
   if (missing.length > 0) {
     const what = missing.map((t) => `${t} (${relative(root, sdkToolPath(root, t))})`).join(', ');
-    return check('android-sdk', 'fail', `SDK em ${root} sem: ${what}`, 'sdkmanager "emulator" "platform-tools" "cmdline-tools;latest"');
+    return check('android-sdk', 'fail', `SDK at ${root} missing: ${what}`, 'sdkmanager "emulator" "platform-tools" "cmdline-tools;latest"');
   }
-  return check('android-sdk', 'ok', `SDK em ${root} com emulator, adb e avdmanager`);
+  return check('android-sdk', 'ok', `SDK at ${root} with emulator, adb and avdmanager`);
 }
 
 function checkEmulatorVersion(root: string | null): Check {
-  if (root === null) return check('emulator-version', 'ok', 'sem SDK Android; nao se aplica');
+  if (root === null) return check('emulator-version', 'ok', 'no Android SDK; not applicable');
   const path = join(root, 'emulator', 'source.properties');
   const props = readIni(path);
   const rev = props === null ? undefined : getValue(props, 'Pkg.Revision');
   if (rev === undefined || !/^\d+(\.\d+)*$/.test(rev.trim())) {
-    return check('emulator-version', 'warn', `versao do emulator nao lida (${path})`);
+    return check('emulator-version', 'warn', `could not read emulator version (${path})`);
   }
   const v = rev.trim();
   const min = MIN_EMULATOR_REVISION.join('.');
   if (compareVersion(v, MIN_EMULATOR_REVISION) < 0) {
-    return check('emulator-version', 'warn', `emulator ${v} < ${min}: versao sem o fix de vazamento de memoria GLES do host`, `atualize o pacote emulator do SDK para ${min} ou mais novo (sdkmanager "emulator")`);
+    return check('emulator-version', 'warn', `emulator ${v} < ${min}: version without the host GLES memory leak fix`, `update the SDK emulator package to ${min} or newer (sdkmanager "emulator")`);
   }
   return check('emulator-version', 'ok', `emulator ${v}`);
 }
 
 function checkAvdGpu(list: readonly AvdInfo[], home: string): Check[] {
-  if (list.length === 0) return [check('avd-gpu', 'ok', `nenhum AVD em ${home}`)];
+  if (list.length === 0) return [check('avd-gpu', 'ok', `no AVD in ${home}`)];
   return list.map((a) => {
     const hq = readIni(join(a.dir, 'hardware-qemu.ini'));
     const mode = hq === null ? undefined : getValue(hq, 'hw.gpu.mode');
-    if (mode === undefined) return check('avd-gpu', 'ok', `${a.name}: sem hardware-qemu.ini com hw.gpu.mode (nao bootou desde o ultimo tune)`);
+    if (mode === undefined) return check('avd-gpu', 'ok', `${a.name}: no hardware-qemu.ini with hw.gpu.mode (not booted since the last tune)`);
     if (isSoftwareGpu(mode)) {
-      return check('avd-gpu', 'warn', `${a.name}: ultimo boot com hw.gpu.mode ${mode.trim()} (renderizacao por software, CPU e RAM altas)`, `devslim android tune ${a.name}`);
+      return check('avd-gpu', 'warn', `${a.name}: last boot with hw.gpu.mode ${mode.trim()} (software rendering, high CPU and RAM)`, `devslim android tune ${a.name}`);
     }
     return check('avd-gpu', 'ok', `${a.name}: hw.gpu.mode ${mode.trim()}`);
   });
 }
 
-// Pedido = -memory do ultimo up/bake (lastLaunch no state) quando ha; senao o
-// hw.ramSize do config.ini (state antigo ou AVD sem state).
+// Requested = -memory of the last up/bake (lastLaunch in the state) when present; else the
+// config.ini hw.ramSize (old state or AVD without state).
 function checkAvdRam(list: readonly AvdInfo[], home: string, env: Runtime['env']): Check[] {
-  if (list.length === 0) return [check('avd-ram', 'ok', `nenhum AVD em ${home}`)];
+  if (list.length === 0) return [check('avd-ram', 'ok', `no AVD in ${home}`)];
   return list.map((a) => {
     const hq = readIni(join(a.dir, 'hardware-qemu.ini'));
     const runtime = hq === null ? null : parseRamMb(getValue(hq, 'hw.ramSize'));
@@ -178,36 +178,36 @@ function checkAvdRam(list: readonly AvdInfo[], home: string, env: Runtime['env']
     try {
       launched = launchedRamMb(loadState<AndroidState>('android', a.name, { env }));
     } catch {
-      launched = null; // state ilegivel: config.ini
+      launched = null; // unreadable state: config.ini
     }
     let asked = launched;
     if (asked === null) {
       const cfg = readIni(a.configPath);
       asked = cfg === null ? null : parseRamMb(getValue(cfg, 'hw.ramSize'));
     }
-    const askedText = launched !== null ? 'pedidos no ultimo up/bake' : 'do config.ini';
-    if (runtime === null) return check('avd-ram', 'ok', `${a.name}: sem hw.ramSize no hardware-qemu.ini (nao bootou desde o ultimo tune)`);
+    const askedText = launched !== null ? 'requested at the last up/bake' : 'from config.ini';
+    if (runtime === null) return check('avd-ram', 'ok', `${a.name}: no hw.ramSize in hardware-qemu.ini (not booted since the last tune)`);
     const why: string[] = [];
     const raised = asked !== null && runtime > asked;
-    if (raised) why.push(`acima dos ${asked} MB ${askedText} (emulador elevou)`);
-    if (runtime > RAM_WARN_MB) why.push(`acima de ${RAM_WARN_MB} MB`);
+    if (raised) why.push(`above the ${asked} MB ${askedText} (emulator raised it)`);
+    if (runtime > RAM_WARN_MB) why.push(`above ${RAM_WARN_MB} MB`);
     if (why.length > 0) {
-      // Elevou: o emulador ignora -memory abaixo do piso sem lowram; tela menor nao ajuda (medido).
+      // Raised: the emulator ignores -memory below its floor without lowram; a smaller screen does not help (measured).
       const fix = raised
-        ? `devslim android tune ${a.name} --lowram (com o AVD desligado; o emulador ignora -memory abaixo do piso dele sem lowram; o lowram muda o comportamento dos apps: o guest se declara aparelho de pouca RAM)`
-        : `devslim android tune ${a.name} (e suba com devslim android up, que passa -memory)`;
-      return check('avd-ram', 'warn', `${a.name}: ultimo boot usou ${runtime} MB, ${why.join(' e ')}`, fix);
+        ? `devslim android tune ${a.name} --lowram (with the AVD shut down; the emulator ignores -memory below its floor without lowram; lowram changes app behavior: the guest reports itself as a low-RAM device)`
+        : `devslim android tune ${a.name} (and start it with devslim android up, which passes -memory)`;
+      return check('avd-ram', 'warn', `${a.name}: last boot used ${runtime} MB, ${why.join(' and ')}`, fix);
     }
-    const askedNote = asked === null ? '' : launched !== null ? ` (pedido no ultimo up/bake ${asked} MB)` : ` (config.ini ${asked} MB)`;
+    const askedNote = asked === null ? '' : launched !== null ? ` (requested at the last up/bake ${asked} MB)` : ` (config.ini ${asked} MB)`;
     return check('avd-ram', 'ok', `${a.name}: ${runtime} MB${askedNote}`);
   });
 }
 
-// config.ini de cada AVD com state x o que o perfil salvo produziria (mesmo
-// applyProfile do plan/tune: nada de mapeamento proprio aqui). A capacidade que
-// explica o drift sai de ligar/desligar cada uma no perfil e ver quais chaves
-// passam a bater. AVD ausente, config.ini ilegivel ou state sem perfil: pulado.
-// So leitura.
+// config.ini of each AVD with state vs what the saved profile would produce (same
+// applyProfile as plan/tune: no separate mapping here). The capability that
+// explains the drift comes from toggling each one in the profile and seeing which keys
+// start to match. Missing AVD, unreadable config.ini or state without profile: skipped.
+// Read-only.
 function driftCapabilities(doc: IniDoc, profile: AndroidProfile, keys: ReadonlySet<string>): { caps: Capability[]; added: Capability[]; removed: Capability[] } {
   const added: Capability[] = [];
   const removed: Capability[] = [];
@@ -215,7 +215,7 @@ function driftCapabilities(doc: IniDoc, profile: AndroidProfile, keys: ReadonlyS
     const has = profile.capabilities.includes(cap);
     const caps = has ? profile.capabilities.filter((c) => c !== cap) : [...profile.capabilities, cap];
     const alt = applyProfile(doc, { ...profile, capabilities: sortCapabilities(caps) }).changes;
-    // Explica se alguma chave em drift deixa de mudar com a capacidade trocada.
+    // Explains it if some drifted key stops changing with the capability toggled.
     const explains = [...keys].some((k) => !alt.some((c) => c.key === k)) && alt.every((c) => keys.has(c.key));
     if (explains) (has ? removed : added).push(cap);
   }
@@ -225,7 +225,7 @@ function driftCapabilities(doc: IniDoc, profile: AndroidProfile, keys: ReadonlyS
 
 function checkProfileDrift(env: Runtime['env']): Check[] {
   const names = listStates('android', { env });
-  if (names.length === 0) return [check('profile-drift', 'ok', 'nenhum AVD com state do devslim')];
+  if (names.length === 0) return [check('profile-drift', 'ok', 'no AVD with devslim state')];
   const out: Check[] = [];
   let clean = 0;
   let skipped = 0;
@@ -235,9 +235,9 @@ function checkProfileDrift(env: Runtime['env']): Check[] {
     let changes: ReturnType<typeof applyProfile>['changes'] = [];
     try {
       profile = loadState<AndroidState>('android', name, { env })?.profile;
-      if (profile === undefined || !Array.isArray(profile.capabilities)) throw new Error('state sem perfil');
+      if (profile === undefined || !Array.isArray(profile.capabilities)) throw new Error('state without profile');
       doc = readIni(findAvd(name, { env }).configPath);
-      if (doc === null) throw new Error('config.ini ilegivel');
+      if (doc === null) throw new Error('unreadable config.ini');
       changes = applyProfile(doc, profile).changes;
     } catch {
       skipped++;
@@ -247,43 +247,43 @@ function checkProfileDrift(env: Runtime['env']): Check[] {
       clean++;
       continue;
     }
-    const list = changes.map((c) => `${c.key}: atual=${c.from ?? '(ausente)'} esperado=${c.to}`).join('; ');
+    const list = changes.map((c) => `${c.key}: current=${c.from ?? '(absent)'} expected=${c.to}`).join('; ');
     const hint = driftCapabilities(doc, profile, new Set(changes.map((c) => c.key)));
     let fix = `devslim android tune ${name}`;
     if (hint.added.length > 0 || hint.removed.length > 0) {
       const why = [
-        ...(hint.added.length > 0 ? [`pede ${hint.added.join(',')}`] : []),
-        ...(hint.removed.length > 0 ? [`dispensa ${hint.removed.join(',')}`] : []),
-      ].join(' e ');
+        ...(hint.added.length > 0 ? [`needs ${hint.added.join(',')}`] : []),
+        ...(hint.removed.length > 0 ? [`drops ${hint.removed.join(',')}`] : []),
+      ].join(' and ');
       const need = hint.caps.length > 0 ? hint.caps.join(',') : 'none';
-      fix = `devslim android tune ${name} --need ${need} (o config.ini atual ${why})\nou devslim android tune ${name} para voltar ao perfil salvo`;
+      fix = `devslim android tune ${name} --need ${need} (the current config.ini ${why})\nor devslim android tune ${name} to return to the saved profile`;
     }
-    out.push(check('profile-drift', 'warn', `${name}: config.ini difere do perfil salvo em ${changes.length} chave(s): ${list}`, fix));
+    out.push(check('profile-drift', 'warn', `${name}: config.ini differs from the saved profile in ${changes.length} key(s): ${list}`, fix));
   }
   if (out.length > 0) return out;
-  const skip = skipped > 0 ? `; ${skipped} pulado(s) (AVD ausente ou config.ini ilegivel)` : '';
-  return [check('profile-drift', 'ok', `${clean} AVD(s) com config.ini no perfil salvo${skip}`)];
+  const skip = skipped > 0 ? `; ${skipped} skipped (missing AVD or unreadable config.ini)` : '';
+  return [check('profile-drift', 'ok', `${clean} AVD(s) with config.ini matching the saved profile${skip}`)];
 }
 
-// Tag da system image de cada AVD com state x capacidades que dependem dos
-// servicos Google. google_apis (ou playstore) sem nenhuma delas: nota ok
-// sugerindo ATD, com o numero medido. ATD/default com alguma delas: warn. AVD
-// ausente, config.ini ilegivel ou sem tag: pulado. So leitura.
+// System image tag of each AVD with state vs capabilities that depend on
+// Google services. google_apis (or playstore) with none of them: ok note
+// suggesting ATD, with the measured number. ATD/default with any of them: warn.
+// Missing AVD, unreadable config.ini or no tag: skipped. Read-only.
 export const GOOGLE_SERVICE_CAPABILITIES: readonly Capability[] = Object.freeze(['push', 'weblogin', 'store']);
-// Medido 2026-11-17 (API 35, pixel_7, 2 min parado, uma medicao cada):
-// phys_footprint do qemu com o perfil padrao do devslim em aosp_atd x google_apis.
+// Measured 2026-11-17 (API 35, pixel_7, 2 min idle, one measurement each):
+// qemu phys_footprint with the devslim default profile on aosp_atd vs google_apis.
 export const ATD_FOOTPRINT_MB = 3660;
 export const GOOGLE_APIS_FOOTPRINT_MB = 4343;
 
 const TAG_TEXT: Readonly<Record<string, string>> = Object.freeze({
-  aosp_atd: 'sem servicos Google',
-  default: 'sem servicos Google',
-  google_atd: 'servicos Google reduzidos',
+  aosp_atd: 'no Google services',
+  default: 'no Google services',
+  google_atd: 'reduced Google services',
 });
 
 function checkAvdImage(env: Runtime['env']): Check[] {
   const names = listStates('android', { env });
-  if (names.length === 0) return [check('avd-image', 'ok', 'nenhum AVD com state do devslim')];
+  if (names.length === 0) return [check('avd-image', 'ok', 'no AVD with devslim state')];
   const out: Check[] = [];
   let fine = 0;
   let skipped = 0;
@@ -292,7 +292,7 @@ function checkAvdImage(env: Runtime['env']): Check[] {
     let cfg: IniDoc | null;
     try {
       const profile = loadState<AndroidState>('android', name, { env })?.profile;
-      if (profile === undefined || !Array.isArray(profile.capabilities)) throw new Error('state sem perfil');
+      if (profile === undefined || !Array.isArray(profile.capabilities)) throw new Error('state without profile');
       caps = profile.capabilities;
       cfg = readIni(findAvd(name, { env }).configPath);
     } catch {
@@ -312,16 +312,16 @@ function checkAvdImage(env: Runtime['env']): Check[] {
       out.push(check(
         'avd-image',
         'ok',
-        `${name}: imagem ${tag} (servicos Google completos) e o perfil nao pede push, weblogin nem store; ` +
-          `uma imagem ATD pesa menos (medido com aosp_atd: ${ATD_FOOTPRINT_MB} MB contra ${GOOGLE_APIS_FOOTPRINT_MB} MB de phys_footprint no host, 2 min parado, uma medicao cada)`,
+        `${name}: image ${tag} (full Google services) and the profile does not need push, weblogin or store; ` +
+          `an ATD image is lighter (measured with aosp_atd: ${ATD_FOOTPRINT_MB} MB vs ${GOOGLE_APIS_FOOTPRINT_MB} MB of host phys_footprint, 2 min idle, one measurement each)`,
         `devslim android create ${name}-atd --image aosp_atd${apiFlag}`,
       ));
     } else if (isAtdTag(tag) && needs.length > 0) {
-      const verdict = tag === 'google_atd' ? 'pode nao funcionar' : 'nao funciona';
+      const verdict = tag === 'google_atd' ? 'may not work' : 'does not work';
       out.push(check(
         'avd-image',
         'warn',
-        `${name}: imagem ${tag} (${TAG_TEXT[tag]}) e o perfil pede ${needs.join(',')}: ${verdict} nessa imagem`,
+        `${name}: image ${tag} (${TAG_TEXT[tag]}) and the profile needs ${needs.join(',')}: ${verdict} on this image`,
         `devslim android create ${name}-gapis --image google_apis${apiFlag}`,
       ));
     } else {
@@ -329,21 +329,21 @@ function checkAvdImage(env: Runtime['env']): Check[] {
     }
   }
   if (out.length > 0) return out;
-  const skip = skipped > 0 ? `; ${skipped} pulado(s) (AVD ausente, config.ini ilegivel ou sem tag da imagem)` : '';
-  return [check('avd-image', 'ok', `${fine} AVD(s) com imagem compativel com as capacidades do perfil${skip}`)];
+  const skip = skipped > 0 ? `; ${skipped} skipped (missing AVD, unreadable config.ini or no image tag)` : '';
+  return [check('avd-image', 'ok', `${fine} AVD(s) with an image compatible with the profile capabilities${skip}`)];
 }
 
-// Emulador rodando agora fora do perfil: GPU efetiva por software, ou AVD
-// tunado lancado por outro (argent, Studio). Fatos da linha de comando do qemu
-// (pgrep -fl) e do hardware-qemu.ini deste boot; nunca adb.
+// Emulator running right now outside the profile: effective software GPU, or a tuned
+// AVD launched by something else (argent, Studio). Facts from the qemu command line
+// (pgrep -fl) and this boot's hardware-qemu.ini; never adb.
 async function checkRunningOffProfile(rt: Runtime): Promise<Check[]> {
   const procs = await listQemuProcesses(rt.exec);
-  if (procs.length === 0) return [check('running-off-profile', 'ok', 'nenhum emulador rodando')];
+  if (procs.length === 0) return [check('running-off-profile', 'ok', 'no emulator running')];
   let session: ReturnType<typeof loadSession> = [];
   try {
     session = loadSession(rt.env);
   } catch {
-    session = []; // sessao corrompida: so a assinatura decide
+    session = []; // corrupt session: only the signature decides
   }
   const out: Check[] = [];
   for (const p of procs) {
@@ -365,24 +365,24 @@ async function checkRunningOffProfile(rt: Runtime): Promise<Check[]> {
     const soft = hw?.gpu != null && isSoftwareGpu(hw.gpu);
     if (!soft && !(tuned && launcher !== 'devslim')) continue;
     const facts = [launcherText(launcher)];
-    if (hw?.gpu != null) facts.push(`gpu efetiva ${hw.gpu}${soft ? ' (renderizacao por software)' : ''}`);
-    if (hw?.ramMb != null) facts.push(`ram efetiva ${hw.ramMb} MB`);
-    const profile = tuned && st?.profile !== undefined ? `; perfil do tune: gpu ${st.profile.gpu}, ${st.profile.ramMb} MB` : '';
+    if (hw?.gpu != null) facts.push(`effective gpu ${hw.gpu}${soft ? ' (software rendering)' : ''}`);
+    if (hw?.ramMb != null) facts.push(`effective ram ${hw.ramMb} MB`);
+    const profile = tuned && st?.profile !== undefined ? `; tune profile: gpu ${st.profile.gpu}, ${st.profile.ramMb} MB` : '';
     out.push(check(
       'running-off-profile',
       'warn',
-      `${p.avd} (pid ${p.pid}) rodando agora: ${facts.join(', ')}${profile}`,
-      `parar o emulador e subir com: devslim android up ${p.avd}\nou exportar ARGENT_EMULATOR_GPU_MODE=host no ambiente do argent`,
+      `${p.avd} (pid ${p.pid}) running now: ${facts.join(', ')}${profile}`,
+      `stop the emulator and start it with: devslim android up ${p.avd}\nor export ARGENT_EMULATOR_GPU_MODE=host in the argent environment`,
     ));
   }
-  return out.length > 0 ? out : [check('running-off-profile', 'ok', `${procs.length} emulador(es) rodando no perfil`)];
+  return out.length > 0 ? out : [check('running-off-profile', 'ok', `${procs.length} emulator(s) running on the profile`)];
 }
 
-// Emulador rodando sem entrada com grpc.port + grpc.token em avd/running: o
-// argent (simulator-server) nao o enxerga para screenshot/describe/tap. Le so
-// o diretorio; o valor do token nunca sai do runningIni.ts. Entrada de pid
-// morto nao conta como anuncio; quando ha, vira uma linha ok so informativa
-// (o arquivo e do emulador/SDK, nada e apagado).
+// Emulator running without an entry with grpc.port + grpc.token in avd/running:
+// argent (simulator-server) cannot see it for screenshot/describe/tap. Reads only
+// the directory; the token value never leaves runningIni.ts. An entry for a dead pid
+// does not count as advertised; when present, it becomes an informational ok line
+// (the file belongs to the emulator/SDK, nothing is deleted).
 async function checkEmulatorAdvertised(rt: Runtime): Promise<Check[]> {
   const procs = await listQemuProcesses(rt.exec);
   const dir = rt.runningDir;
@@ -390,36 +390,36 @@ async function checkEmulatorAdvertised(rt: Runtime): Promise<Check[]> {
   const staleNote = scan.stale.length === 0 ? [] : [check(
     'emulator-advertised',
     'ok',
-    `${scan.stale.length} entrada(s) de emulador morto em ${dir} ignorada(s): ${scan.stale.map((e) => `pid_${e.pid}.ini (${e.avdName})`).join(', ')}; arquivos do emulador, nada apagado`,
+    `${scan.stale.length} dead emulator entry(ies) in ${dir} ignored: ${scan.stale.map((e) => `pid_${e.pid}.ini (${e.avdName})`).join(', ')}; emulator files, nothing deleted`,
   )];
-  if (procs.length === 0) return [check('emulator-advertised', 'ok', 'nenhum emulador rodando'), ...staleNote];
+  if (procs.length === 0) return [check('emulator-advertised', 'ok', 'no emulator running'), ...staleNote];
   if (dir === null) {
-    return [check('emulator-advertised', 'warn', `${procs.length} emulador(es) rodando; anuncio nao verificado (diretorio avd/running desconhecido nesta plataforma)`)];
+    return [check('emulator-advertised', 'warn', `${procs.length} emulator(s) running; advertisement not checked (avd/running directory unknown on this platform)`)];
   }
   const out: Check[] = [];
   for (const p of procs) {
     const e = findRunningEntry(scan.live, p.avd);
     if (isAdvertised(e)) continue;
-    const what = e === null ? `sem entrada em ${dir}` : `com entrada em ${dir} sem ${e.grpcPort === null ? 'grpc.port' : 'grpc.token'}`;
+    const what = e === null ? `with no entry in ${dir}` : `with an entry in ${dir} lacking ${e.grpcPort === null ? 'grpc.port' : 'grpc.token'}`;
     out.push(check(
       'emulator-advertised',
       'warn',
-      `${p.avd} (pid ${p.pid}) rodando ${what}: ferramentas que dependem de gRPC (argent screenshot/tap) nao o enxergam; adb funciona normalmente`,
-      `devslim android down ${p.avd} e devslim android up ${p.avd} (lanca com -grpc <porta> -grpc-use-token)`,
+      `${p.avd} (pid ${p.pid}) running ${what}: tools that rely on gRPC (argent screenshot/tap) cannot see it; adb works normally`,
+      `devslim android down ${p.avd} and devslim android up ${p.avd} (launches with -grpc <port> -grpc-use-token)`,
     ));
   }
-  return [...(out.length > 0 ? out : [check('emulator-advertised', 'ok', `${procs.length} emulador(es) rodando, todos anunciados em ${dir}`)]), ...staleNote];
+  return [...(out.length > 0 ? out : [check('emulator-advertised', 'ok', `${procs.length} emulator(s) running, all advertised in ${dir}`)]), ...staleNote];
 }
 
 function checkArgentGpu(env: Runtime['env']): Check {
   const path = onPath('argent', env);
-  if (path === null) return check('argent-gpu', 'ok', 'argent nao esta no PATH; nao se aplica');
+  if (path === null) return check('argent-gpu', 'ok', 'argent is not on PATH; not applicable');
   const mode = env.ARGENT_EMULATOR_GPU_MODE;
-  if (mode === 'host') return check('argent-gpu', 'ok', `argent em ${path} com ARGENT_EMULATOR_GPU_MODE=host`);
+  if (mode === 'host') return check('argent-gpu', 'ok', `argent at ${path} with ARGENT_EMULATOR_GPU_MODE=host`);
   return check(
     'argent-gpu',
     'warn',
-    `argent em ${path} e ARGENT_EMULATOR_GPU_MODE=${mode ?? '(ausente)'}: quando o argent boota um AVD sozinho ele usa -gpu auto, que pode cair em renderizacao por software (lavapipe/swiftshader); defina a variavel no ambiente do tool-server do argent`,
+    `argent at ${path} and ARGENT_EMULATOR_GPU_MODE=${mode ?? '(absent)'}: when argent boots an AVD on its own it uses -gpu auto, which can fall back to software rendering (lavapipe/swiftshader); set the variable in the argent tool-server environment`,
     'export ARGENT_EMULATOR_GPU_MODE=host',
   );
 }
@@ -432,16 +432,16 @@ function checkDefaultBootSnapshot(list: readonly AvdInfo[]): Check[] {
     out.push(check(
       'default-boot-snapshot',
       'warn',
-      `${a.name}: snapshots/default_boot com ${sizeText(dirSize(dir))} (ram.bin regravado a cada cold boot do argent; o devslim usa slim_base)`,
+      `${a.name}: snapshots/default_boot holds ${sizeText(dirSize(dir))} (ram.bin rewritten on every argent cold boot; devslim uses slim_base)`,
     ));
   }
-  return out.length > 0 ? out : [check('default-boot-snapshot', 'ok', 'nenhum AVD com snapshots/default_boot/ram.bin')];
+  return out.length > 0 ? out : [check('default-boot-snapshot', 'ok', 'no AVD with snapshots/default_boot/ram.bin')];
 }
 
 const normSysdir = (p: string) => p.trim().replace(/\\/g, '/').replace(/\/+$/, '');
 
 function checkOrphanImages(root: string | null, list: readonly AvdInfo[]): Check[] {
-  if (root === null) return [check('orphan-images', 'ok', 'sem SDK Android; nao se aplica')];
+  if (root === null) return [check('orphan-images', 'ok', 'no Android SDK; not applicable')];
   const base = join(root, 'system-images');
   const referenced = new Set<string>();
   for (const a of list) {
@@ -473,13 +473,13 @@ function checkOrphanImages(root: string | null, list: readonly AvdInfo[]): Check
         out.push(check(
           'orphan-images',
           'warn',
-          `${rel}: nenhum config.ini de AVD referencia esta imagem; ocupa ${sizeText(dirSize(join(base, api, tag, abi)))} (so relatado, nada apagado)`,
-          `sdkmanager --uninstall "${['system-images', api, tag, abi].join(';')}" se nao for usar`,
+          `${rel}: no AVD config.ini references this image; takes ${sizeText(dirSize(join(base, api, tag, abi)))} (reported only, nothing deleted)`,
+          `sdkmanager --uninstall "${['system-images', api, tag, abi].join(';')}" if you will not use it`,
         ));
       }
     }
   }
-  return out.length > 0 ? out : [check('orphan-images', 'ok', 'toda system image instalada e usada por algum AVD')];
+  return out.length > 0 ? out : [check('orphan-images', 'ok', 'every installed system image is used by some AVD')];
 }
 
 async function checkSwap(rt: Runtime): Promise<Check> {
@@ -489,7 +489,7 @@ async function checkSwap(rt: Runtime): Promise<Check> {
 
 async function checkIosAlwaysEnabled(rt: Runtime, ctx: IosContext): Promise<Check[]> {
   const devices = await listSimDevices(rt);
-  if (devices === null) return [check('ios-always-enabled', 'warn', 'nao verificado: xcrun simctl list devices -j falhou')];
+  if (devices === null) return [check('ios-always-enabled', 'warn', 'not checked: xcrun simctl list devices -j failed')];
   const out: Check[] = [];
   for (const d of devices) {
     if (!existsSync(storePath(d.udid, { base: ctx.storeBase }))) continue;
@@ -497,7 +497,7 @@ async function checkIosAlwaysEnabled(rt: Runtime, ctx: IosContext): Promise<Chec
     try {
       store = await readStore(d.udid, { base: ctx.storeBase, exec: rt.exec });
     } catch (err) {
-      out.push(check('ios-always-enabled', 'warn', `${d.name} (${d.udid}): store ilegivel (${(err as Error).message})`));
+      out.push(check('ios-always-enabled', 'warn', `${d.name} (${d.udid}): unreadable store (${(err as Error).message})`));
       continue;
     }
     const off = ALWAYS_ENABLED.filter((l) => store.get(l) === true);
@@ -506,28 +506,28 @@ async function checkIosAlwaysEnabled(rt: Runtime, ctx: IosContext): Promise<Chec
     out.push(check(
       'ios-always-enabled',
       'warn',
-      `${d.name} (${d.udid}): store desliga ${off.join(', ')}, que devem ficar sempre ligados`,
+      `${d.name} (${d.udid}): store disables ${off.join(', ')}, which must always stay enabled`,
       `devslim ios up ${ambiguous ? d.udid : d.name}`,
     ));
   }
-  return out.length > 0 ? out : [check('ios-always-enabled', 'ok', 'nenhum store de simulador desliga assistantd, gamed ou sharingd')];
+  return out.length > 0 ? out : [check('ios-always-enabled', 'ok', 'no simulator store disables assistantd, gamed or sharingd')];
 }
 
-// Entradas mortas na sessao; e, para device vivo com auto-desligar registrado,
-// watcher cujo pid morreu (o device nao vai mais desligar sozinho).
+// Dead session entries; and, for a live device with idle-down registered,
+// a watcher whose pid died (the device will no longer shut down on its own).
 async function checkStaleSession(rt: Runtime): Promise<Check[]> {
   const entries = loadSession(rt.env);
-  if (entries.length === 0) return [check('stale-session', 'ok', 'sessao vazia')];
+  if (entries.length === 0) return [check('stale-session', 'ok', 'empty session')];
   const devices = entries.some((e) => e.platform === 'ios') ? await listSimDevices(rt) : [];
   const st = await sessionStatus(entries, { exec: rt.exec, env: rt.env, devices, pidAlive: rt.pidAlive });
   const stale = st.filter((e) => e.stale);
   const out: Check[] = [
     stale.length === 0
-      ? check('stale-session', 'ok', `${entries.length} entrada(s) na sessao, todas vivas`)
+      ? check('stale-session', 'ok', `${entries.length} session entry(ies), all alive`)
       : check(
           'stale-session',
           'warn',
-          `${stale.length} entrada(s) mortas na sessao: ${stale.map((e) => `${e.platform} ${e.name} ${e.id}`).join(', ')}`,
+          `${stale.length} dead session entry(ies): ${stale.map((e) => `${e.platform} ${e.name} ${e.id}`).join(', ')}`,
           'devslim down',
         ),
   ];
@@ -537,30 +537,30 @@ async function checkStaleSession(rt: Runtime): Promise<Check[]> {
     out.push(check(
       'stale-session',
       'warn',
-      `${e.platform} ${e.name} ${e.id}: watcher do auto-desligar (pid ${e.idleDown.watcherPid}) morreu com o device rodando; ele nao vai desligar sozinho (motivo no log idle-${id}.log)`,
-      `devslim ${e.platform} up ${id} --idle-down ${formatDuration(e.idleDown.ms)}\nou devslim down`,
+      `${e.platform} ${e.name} ${e.id}: idle-down watcher (pid ${e.idleDown.watcherPid}) died while the device was running; it will not shut down on its own (reason in log idle-${id}.log)`,
+      `devslim ${e.platform} up ${id} --idle-down ${formatDuration(e.idleDown.ms)}\nor devslim down`,
     ));
   }
   return out;
 }
 
-// State do devslim cujo AVD ou simulador nao existe mais. So le; o fix e o
-// `forget`, que apaga o registro sem tocar em device. Sem simctl, os states iOS
-// ficam como nao verificados.
+// devslim state whose AVD or simulator no longer exists. Read-only; the fix is
+// `forget`, which deletes the record without touching any device. Without simctl,
+// iOS states are reported as not checked.
 async function checkOrphanState(rt: Runtime): Promise<Check[]> {
   const out: Check[] = androidOrphans(rt.env).map((o) =>
-    check('orphan-state', 'warn', `${o.path}: AVD ${o.name} nao existe mais (state orfao)`, o.forget),
+    check('orphan-state', 'warn', `${o.path}: AVD ${o.name} no longer exists (orphan state)`, o.forget),
   );
   const iosIds = listStates('ios', { env: rt.env });
   if (iosIds.length > 0) {
     const ios = iosOrphans(rt.env, await listSimDevices(rt));
     if (ios === null) {
-      out.push(check('orphan-state', 'warn', `${iosIds.length} state(s) iOS nao verificado(s): xcrun simctl list devices -j falhou`));
+      out.push(check('orphan-state', 'warn', `${iosIds.length} iOS state(s) not checked: xcrun simctl list devices -j failed`));
     } else {
-      for (const o of ios) out.push(check('orphan-state', 'warn', `${o.path}: simulador ${o.name} (${o.id}) nao existe mais (state orfao)`, o.forget));
+      for (const o of ios) out.push(check('orphan-state', 'warn', `${o.path}: simulator ${o.name} (${o.id}) no longer exists (orphan state)`, o.forget));
     }
   }
-  return out.length > 0 ? out : [check('orphan-state', 'ok', 'nenhum state orfao (todo state aponta para AVD ou simulador existente)')];
+  return out.length > 0 ? out : [check('orphan-state', 'ok', 'no orphan state (every state points to an existing AVD or simulator)')];
 }
 
 export async function runDoctor(ctx: DoctorContext = {}): Promise<Check[]> {
@@ -598,7 +598,7 @@ export function doctorText(checks: readonly Check[]): string[] {
   for (const c of checks) {
     const tag = `[${c.level}]`.padEnd(6);
     lines.push(`${tag} ${c.id}: ${c.message}`);
-    // fix de varias linhas: continuacao alinhada depois de "fix: ".
+    // multi-line fix: continuation aligned after "fix: ".
     if (c.fix !== undefined) lines.push(`${' '.repeat(7)}fix: ${c.fix.split('\n').join(`\n${' '.repeat(12)}`)}`);
   }
   const fails = checks.filter((c) => c.level === 'fail').length;

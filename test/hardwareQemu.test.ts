@@ -15,10 +15,10 @@ import {
 } from '../src/android/hardwareQemu.ts';
 import { isSoftwareGpu as doctorIsSoftwareGpu, parseRamMb as doctorParseRamMb } from '../src/doctor.ts';
 
-// Linha literal do log do emulador no uso real (bench-api35, -memory 2048).
+// Literal emulator log line from real use (bench-api35, -memory 2048).
 const REAL_LINE = 'INFO         | Increasing RAM size to 2560MB';
 
-test('parseRamIncreaseMb: linha real, ultima ocorrencia vence, ausencia = null', () => {
+test('parseRamIncreaseMb: real line, last occurrence wins, absence = null', () => {
   assert.equal(parseRamIncreaseMb(`INFO         | Android emulator version 36.1.9.0\n${REAL_LINE}\nINFO         | boot\n`), 2560);
   assert.equal(parseRamIncreaseMb(`${REAL_LINE.replace('2560', '4096')}\n${REAL_LINE}\n`), 2560);
   assert.equal(parseRamIncreaseMb('INFO         | Increasing RAM size to 3072 MB\r\n'), 3072);
@@ -26,7 +26,7 @@ test('parseRamIncreaseMb: linha real, ultima ocorrencia vence, ausencia = null',
   assert.equal(parseRamIncreaseMb(''), null);
 });
 
-test('ramIncreaseFromLog: so o trecho depois do offset; arquivo ausente = null', () => {
+test('ramIncreaseFromLog: only the part after the offset; missing file = null', () => {
   const dir = mkdtempSync(join(tmpdir(), 'devslim-hwq-'));
   try {
     const log = join(dir, 'a.log');
@@ -34,16 +34,16 @@ test('ramIncreaseFromLog: so o trecho depois do offset; arquivo ausente = null',
     assert.equal(fileSize(log), 0);
     writeFileSync(log, `${REAL_LINE.replace('2560', '4096')}\n`);
     const offset = fileSize(log);
-    assert.equal(ramIncreaseFromLog(log, offset), null, 'nada novo depois do offset');
+    assert.equal(ramIncreaseFromLog(log, offset), null, 'nothing new after the offset');
     appendFileSync(log, `${REAL_LINE}\n`);
     assert.equal(ramIncreaseFromLog(log, offset), 2560);
-    assert.equal(ramIncreaseFromLog(log), 2560, 'sem offset: ultima do arquivo');
+    assert.equal(ramIncreaseFromLog(log), 2560, 'no offset: last one in the file');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('readEffectiveHardware: hardware-qemu.ini com " = "; ausente = null; parseRamMb unico', () => {
+test('readEffectiveHardware: hardware-qemu.ini with " = "; absent = null; single parseRamMb', () => {
   const dir = mkdtempSync(join(tmpdir(), 'devslim-hwq-'));
   try {
     assert.equal(readEffectiveHardware(dir), null);
@@ -52,13 +52,13 @@ test('readEffectiveHardware: hardware-qemu.ini com " = "; ausente = null; parseR
     writeFileSync(join(dir, 'hardware-qemu.ini'), 'hw.ramSize = 2G\n');
     assert.deepEqual(readEffectiveHardware(dir), { ramMb: 2048, gpu: null });
     assert.equal(parseRamMb('2048MB'), 2048);
-    assert.equal(doctorParseRamMb, parseRamMb, 'doctor reexporta a mesma funcao');
+    assert.equal(doctorParseRamMb, parseRamMb, 'doctor re-exports the same function');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('parseRamIncreaseLine/ramIncreaseLineFromLog: devolvem MB e a linha (espacos colapsados) deste boot', () => {
+test('parseRamIncreaseLine/ramIncreaseLineFromLog: return MB and the line (whitespace collapsed) from this boot', () => {
   assert.deepEqual(parseRamIncreaseLine(`INFO | boot\n${REAL_LINE}\r\n`), { mb: 2560, line: 'INFO | Increasing RAM size to 2560MB' });
   assert.equal(parseRamIncreaseLine('INFO | boot\n'), null);
   const dir = mkdtempSync(join(tmpdir(), 'devslim-hwq-'));
@@ -74,7 +74,7 @@ test('parseRamIncreaseLine/ramIncreaseLineFromLog: devolvem MB e a linha (espaco
   }
 });
 
-test('isSoftwareGpu: lavapipe, swiftshader*, software, guest; host/auto nao; doctor reexporta', () => {
+test('isSoftwareGpu: lavapipe, swiftshader*, software, guest; host/auto not; doctor re-exports', () => {
   for (const m of ['lavapipe', 'swiftshader_indirect', 'swiftshader', 'software', 'guest', ' Lavapipe ']) assert.equal(isSoftwareGpu(m), true, m);
   for (const m of ['host', 'auto', 'angle_indirect']) assert.equal(isSoftwareGpu(m), false, m);
   assert.equal(doctorIsSoftwareGpu, isSoftwareGpu);

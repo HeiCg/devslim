@@ -1,10 +1,10 @@
 import type { Capability } from '../capabilities.ts';
 
-// Lista gerida de bloat do guest Android.
-// Nomes de pacote e agrupamento transcritos de kdbhalala/avdslim
-// (internal/bloat/packages.go, MIT; ver NOTICE). Descricoes com redacao
-// propria. Nada aqui foi validado contra uma imagem real: o debloat (T2)
-// cruza com `pm list packages` antes de desligar.
+// Managed bloat list for the Android guest.
+// Package names and grouping transcribed from kdbhalala/avdslim
+// (internal/bloat/packages.go, MIT; see NOTICE). Descriptions are our own
+// wording. Nothing here was validated against a real image: the debloat (T2)
+// cross-checks with `pm list packages` before disabling.
 
 export type BloatLevel = 'standard' | 'aggressive';
 
@@ -15,10 +15,10 @@ export type BloatCategory = Readonly<{
   packages: readonly string[];
 }>;
 
-// Pacotes que nunca desligamos, mesmo que aparecam em alguma lista de origem.
-// bluetooth: system_server entra em crash-loop no Android 16+ sem ele.
-// chrome: expo-web-browser e OAuth dependem dele.
-// O Gboard saiu daqui: vai so na lista aggressive (ver GBOARD).
+// Packages we never disable, even if they show up in some source list.
+// bluetooth: system_server crash-loops on Android 16+ without it.
+// chrome: expo-web-browser and OAuth depend on it.
+// Gboard moved out of here: it is only in the aggressive list (see GBOARD).
 export const NEVER_DISABLE: readonly string[] = Object.freeze([
   'com.google.android.bluetooth',
   'com.android.chrome',
@@ -33,15 +33,15 @@ export const NEVER_DISABLE: readonly string[] = Object.freeze([
 ]);
 
 export const PLAY_STORE = 'com.android.vending';
-// Teclado na tela do google_apis (medido 2026-11-17: 81 MB de PSS no guest).
-// Sem ele o texto ainda chega por adb/argent input, mas layout que desvia do
-// teclado nao da para testar; a capacidade keyboard o mantem.
+// google_apis on-screen keyboard (measured 2026-11-17: 81 MB of PSS in the guest).
+// Without it text still arrives via adb/argent input, but layouts that move
+// around the keyboard cannot be tested; the keyboard capability keeps it.
 export const GBOARD = 'com.google.android.inputmethod.latin';
 
-// Religados por capacidade: a capacidade presente tira o pacote do plano.
+// Kept by capability: when the capability is present the package leaves the plan.
 export const KEPT_BY_CAPABILITY: Readonly<Partial<Record<Capability, readonly string[]>>> = Object.freeze({
   camera: Object.freeze(['com.android.camera2', 'com.android.cameraextensions']),
-  // App que usa mapa/geocoding costuma abrir o Maps (intents geo:, navegacao).
+  // Apps using maps/geocoding often open Maps (geo: intents, navigation).
   location: Object.freeze(['com.google.android.apps.maps']),
   store: Object.freeze([PLAY_STORE]),
   keyboard: Object.freeze([GBOARD]),
@@ -52,19 +52,19 @@ function category(id: string, level: BloatLevel, description: string, packages: 
 }
 
 export const BLOAT_CATEGORIES: readonly BloatCategory[] = Object.freeze([
-  category('assistant-search', 'standard', 'Assistente do Google, busca e servicos de IA em segundo plano', [
+  category('assistant-search', 'standard', 'Google Assistant, search and background AI services', [
     'com.google.android.googlequicksearchbox',
     'com.google.android.as',
     'com.google.android.as.oss',
   ]),
-  category('bluetooth-peripherals', 'standard', 'Servico MIDI via Bluetooth (o APK de Bluetooth em si nunca entra)', [
+  category('bluetooth-peripherals', 'standard', 'Bluetooth MIDI service (the Bluetooth APK itself is never included)', [
     'com.android.bluetoothmidiservice',
   ]),
-  category('ads-measurement', 'standard', 'Privacy Sandbox e medicao de anuncios', [
+  category('ads-measurement', 'standard', 'Privacy Sandbox and ad measurement', [
     'com.google.android.adservices.api',
     'com.google.mainline.adservices',
   ]),
-  category('wellbeing-intelligence', 'standard', 'Bem-estar digital, sugestoes inteligentes, recursos de IA e acessorios', [
+  category('wellbeing-intelligence', 'standard', 'Digital Wellbeing, smart suggestions, AI features and accessories', [
     'com.google.android.apps.wellbeing',
     'com.google.android.settings.intelligence',
     'com.android.emulator.multidisplay',
@@ -83,7 +83,7 @@ export const BLOAT_CATEGORIES: readonly BloatCategory[] = Object.freeze([
     'com.google.android.apps.safetyhub',
     'com.google.android.markup',
   ]),
-  category('media-apps', 'standard', 'Apps de midia e de consumo pre-instalados (fotos, video, musica, mapas, email, camera)', [
+  category('media-apps', 'standard', 'Preinstalled media and consumer apps (photos, video, music, maps, email, camera)', [
     'com.google.android.apps.photos',
     'com.google.android.youtube',
     'com.google.android.videos',
@@ -98,7 +98,7 @@ export const BLOAT_CATEGORIES: readonly BloatCategory[] = Object.freeze([
     'com.android.cameraextensions',
     'com.android.DeviceAsWebcam',
   ]),
-  category('telephony', 'standard', 'Telefone, SMS, contatos, alertas de emergencia e satelite', [
+  category('telephony', 'standard', 'Phone, SMS, contacts, emergency alerts and satellite', [
     'com.google.android.apps.messaging',
     'com.google.android.dialer',
     'com.google.android.contacts',
@@ -110,17 +110,17 @@ export const BLOAT_CATEGORIES: readonly BloatCategory[] = Object.freeze([
     'com.google.android.telephony.satellite',
     'com.android.stk',
   ]),
-  category('accessibility-speech', 'standard', 'Sintese de voz e servicos de acessibilidade', [
+  category('accessibility-speech', 'standard', 'Text-to-speech and accessibility services', [
     'com.google.android.tts',
     'com.google.android.marvin.talkback',
     'com.google.android.apps.accessibility.voiceaccess',
   ]),
-  category('printing', 'standard', 'Impressao e spoolers', [
+  category('printing', 'standard', 'Printing and spoolers', [
     'com.android.printspooler',
     'com.android.bips',
     'com.google.android.printservice.recommendation',
   ]),
-  category('feedback-extras', 'standard', 'Feedback, rastreamento, protetores de tela, papel de parede e apps utilitarios', [
+  category('feedback-extras', 'standard', 'Feedback, tracing, screen savers, wallpaper and utility apps', [
     'com.google.android.feedback',
     'com.android.traceur',
     'com.android.dreams.basic',
@@ -135,19 +135,19 @@ export const BLOAT_CATEGORIES: readonly BloatCategory[] = Object.freeze([
     'com.android.calculator2',
     'com.google.android.calculator',
   ]),
-  // Na origem tambem consta com.android.chrome; removido (NEVER_DISABLE).
-  category('store-setup', 'aggressive', 'Play Store (atualizador em segundo plano) e assistentes de configuracao inicial', [
+  // The source also lists com.android.chrome; removed (NEVER_DISABLE).
+  category('store-setup', 'aggressive', 'Play Store (background updater) and initial setup wizards', [
     PLAY_STORE,
     'com.google.android.partnersetup',
     'com.google.android.setupwizard',
     'com.android.setupwizard',
   ]),
-  category('on-screen-keyboard', 'aggressive', 'Teclado na tela (Gboard); texto continua chegando por adb/argent input', [GBOARD]),
+  category('on-screen-keyboard', 'aggressive', 'On-screen keyboard (Gboard); text still arrives via adb/argent input', [GBOARD]),
 ]);
 
 const LEVEL_RANK: Readonly<Record<BloatLevel, number>> = Object.freeze({ standard: 0, aggressive: 1 });
 
-// Pacotes geridos ate o nivel pedido, sem duplicatas, na ordem das categorias.
+// Managed packages up to the requested level, deduplicated, in category order.
 export function managedPackages(level: BloatLevel = 'aggressive'): string[] {
   const out = new Set<string>();
   for (const cat of BLOAT_CATEGORIES) {
@@ -156,7 +156,7 @@ export function managedPackages(level: BloatLevel = 'aggressive'): string[] {
   return [...out];
 }
 
-// gerida(nivel) ∩ instalados − NEVER_DISABLE − religados por capacidade.
+// managed(level) AND installed, minus NEVER_DISABLE, minus kept by capability.
 export function planDisable(opts: {
   installed: readonly string[];
   level: BloatLevel;
@@ -168,7 +168,7 @@ export function planDisable(opts: {
   return managedPackages(opts.level).filter((p) => installed.has(p) && !blocked.has(p));
 }
 
-// So reabilita o que nos desligamos e que pertence a lista gerida.
+// Only re-enables what we disabled and what belongs to the managed list.
 export function planRestore(savedDisabled: readonly string[]): string[] {
   const managed = new Set(managedPackages('aggressive'));
   return [...new Set(savedDisabled)].filter((p) => managed.has(p));

@@ -1,9 +1,9 @@
 import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Tamanho de diretorio: recursivo em Node (sem processo), sem seguir symlink,
-// com limite de profundidade e de arquivos. `truncated` = algum limite cortou.
-// Usado pelo doctor (snapshot e imagens orfas) e pelo plan/tune (snapshots/).
+// Directory size: recursive in Node (no process), without following symlinks,
+// with depth and file count limits. `truncated` = some limit cut it short.
+// Used by doctor (snapshot and orphan images) and by plan/tune (snapshots/).
 
 export type DirSize = Readonly<{ bytes: number; files: number; truncated: boolean }>;
 
@@ -48,4 +48,4 @@ export function dirSize(path: string, opts: { maxDepth?: number; maxFiles?: numb
   return Object.freeze({ bytes, files, truncated });
 }
 
-export const sizeText = (s: DirSize) => `${bytesToMb(s.bytes)} MB${s.truncated ? ' (ou mais; contagem cortada)' : ''}`;
+export const sizeText = (s: DirSize) => `${bytesToMb(s.bytes)} MB${s.truncated ? ' (or more; count truncated)' : ''}`;

@@ -6,7 +6,7 @@ import { resolveRuntime, type RuntimeContext } from './android/deps.ts';
 import { findAvdSerial, loadSession } from './android/session.ts';
 import { createSimctl } from './ios/simctl.ts';
 
-// Medicao. Qualquer fonte pode falhar: o campo vira null, nunca erro.
+// Measurement. Any source may fail: the field becomes null, never an error.
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const kbToMb = (kb: number) => round1(kb / 1024);
@@ -18,10 +18,10 @@ const unitMb = (num: string, unit: string): number | null => {
   return Number.isFinite(n) ? round1(n * UNIT_TO_MB[unit]) : null;
 };
 
-// `footprint -p <pid>` traz dois numeros que divergem em processo com
-// Hypervisor.framework (qemu): o cabecalho "<proc> [pid]: 64-bit  Footprint: N MB"
-// e a linha "phys_footprint: N MB" do bloco Auxiliary data. Medido no qemu:
-// cabecalho 3000 MB, phys_footprint 5582 MB. Cada parser le so a sua linha.
+// `footprint -p <pid>` reports two numbers that diverge for a process using
+// Hypervisor.framework (qemu): the header "<proc> [pid]: 64-bit  Footprint: N MB"
+// and the "phys_footprint: N MB" line in the Auxiliary data block. Measured on qemu:
+// header 3000 MB, phys_footprint 5582 MB. Each parser reads only its own line.
 export function parsePhysFootprintMb(text: string): number | null {
   const m = /^\s*phys_footprint:\s*([\d.,]+)\s*(B|KB|MB|GB)\b/m.exec(text);
   return m ? unitMb(m[1], m[2]) : null;
@@ -32,8 +32,8 @@ export function parseFootprintHeaderMb(text: string): number | null {
   return m ? unitMb(m[1], m[2]) : null;
 }
 
-// Compatibilidade: phys_footprint e, sem ele, o cabecalho. O `measure` usa os
-// dois parsers acima em campos separados.
+// Compatibility: phys_footprint and, without it, the header. `measure` uses the
+// two parsers above in separate fields.
 export function parseFootprintMb(text: string): number | null {
   const m =
     /^\s*phys_footprint:\s*([\d.,]+)\s*(B|KB|MB|GB)\b/m.exec(text) ??
@@ -49,7 +49,7 @@ export function parseRssMb(text: string): number | null {
   return /^\d+$/.test(t) ? kbToMb(Number(t)) : null;
 }
 
-// /proc/meminfo: valores em kB.
+// /proc/meminfo: values in kB.
 export function parseProcMeminfo(text: string): { memTotalMb: number | null; memAvailableMb: number | null } {
   const field = (name: string) => {
     const m = new RegExp(`^${name}:\\s*(\\d+)\\s*kB`, 'm').exec(text);
@@ -58,14 +58,14 @@ export function parseProcMeminfo(text: string): { memTotalMb: number | null; mem
   return { memTotalMb: field('MemTotal'), memAvailableMb: field('MemAvailable') };
 }
 
-// `ps -A`: linhas nao vazias menos o cabecalho.
+// `ps -A`: non-empty lines minus the header.
 export function countPsProcesses(text: string): number | null {
   const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '');
   if (lines.length === 0 || !/\bPID\b/.test(lines[0])) return null;
   return lines.length - 1;
 }
 
-// `dumpsys meminfo`: " Used RAM: 1,234,567K (...)" e " Free RAM: ...".
+// `dumpsys meminfo`: " Used RAM: 1,234,567K (...)" and " Free RAM: ...".
 export function parseDumpsysMeminfo(text: string): { usedRamMb: number | null; freeRamMb: number | null } {
   const field = (name: string) => {
     const m = new RegExp(`^\\s*${name} RAM:\\s*([\\d,.]+)\\s*([KMG])B?\\b`, 'm').exec(text);
@@ -78,8 +78,8 @@ export function parseDumpsysMeminfo(text: string): { usedRamMb: number | null; f
   return { usedRamMb: field('Used'), freeRamMb: field('Free') };
 }
 
-// footprintMb = phys_footprint; footprintHeaderMb = cabecalho do footprint.
-// Comparacao antes/depois deve usar sempre o mesmo campo.
+// footprintMb = phys_footprint; footprintHeaderMb = footprint header.
+// Before/after comparisons must always use the same field.
 export type HostMeasure = Readonly<{ footprintMb: number | null; footprintHeaderMb: number | null; rssMb: number | null }>;
 export type GuestMeasure = Readonly<{
   memTotalMb: number | null;
@@ -118,7 +118,7 @@ export async function measureAndroidGuest(serial: string, opts: { adb: Adb }): P
   return Object.freeze({ ...mem, processes: ps === null ? null : countPsProcesses(ps), ...dm });
 }
 
-// pid do qemu do AVD: `pgrep -f "qemu-system.*-avd <nome>( |$)"`; senao o pid salvo na sessao.
+// qemu pid of the AVD: `pgrep -f "qemu-system.*-avd <name>( |$)"`; else the pid saved in the session.
 export async function findQemuPid(avd: string, opts: { exec: Exec; sessionPid?: number | null }): Promise<number | null> {
   const out = await stdoutOf(() => opts.exec('pgrep', ['-f', `qemu-system.*-avd ${avd}( |$)`], { timeoutMs: 10_000 }));
   const pid = out
@@ -129,7 +129,7 @@ export async function findQemuPid(avd: string, opts: { exec: Exec; sessionPid?: 
   return opts.sessionPid ?? null;
 }
 
-// Contrato estavel do `measure --json`.
+// Stable contract of `measure --json`.
 export type AndroidMeasurement = Readonly<{
   platform: 'android';
   avd: string;
@@ -141,12 +141,12 @@ export type AndroidMeasurement = Readonly<{
 }>;
 
 // ---------------------------------------------------------------------------
-// iOS: soma phys_footprint e %cpu da arvore do launchd_sim do device.
+// iOS: sums phys_footprint and %cpu of the device launchd_sim tree.
 
 const TOP_UNIT_TO_MB: Readonly<Record<string, number>> = Object.freeze({ B: 1 / (1024 * 1024), K: 1 / 1024, M: 1, G: 1024 });
 
-// `top -l 1 -stats pid,mem`: linhas "1234  56M+" (sufixos B/K/M/G e o +/- que
-// o top anexa). Devolve pid -> MB. Cabecalho e linhas de resumo sao ignorados.
+// `top -l 1 -stats pid,mem`: lines "1234  56M+" (B/K/M/G suffixes and the +/- that
+// top appends). Returns pid -> MB. Header and summary lines are ignored.
 export function parseTopMem(text: string): Map<number, number> {
   const out = new Map<number, number>();
   for (const line of text.split(/\r?\n/)) {
@@ -159,7 +159,7 @@ export function parseTopMem(text: string): Map<number, number> {
 
 export type PsEntry = Readonly<{ pid: number; ppid: number; cpu: number; comm: string }>;
 
-// `ps -axo pid,ppid,%cpu,comm` (comm pode ter espaco no caminho).
+// `ps -axo pid,ppid,%cpu,comm` (comm may contain spaces in the path).
 export function parsePsTable(text: string): Map<number, PsEntry> {
   const out = new Map<number, PsEntry>();
   for (const line of text.split(/\r?\n/)) {
@@ -171,8 +171,8 @@ export function parsePsTable(text: string): Map<number, PsEntry> {
   return out;
 }
 
-// pids alcancaveis a partir de `root` pelos filhos; quem nao descende da raiz
-// (orfao reparentado no launchd do host, outro simulador) fica de fora.
+// pids reachable from `root` through children; anything not descending from the root
+// (orphan reparented to the host launchd, another simulator) is left out.
 export function processTree(root: number, table: ReadonlyMap<number, PsEntry>): number[] {
   const children = new Map<number, number[]>();
   for (const e of table.values()) {
@@ -192,7 +192,7 @@ export function processTree(root: number, table: ReadonlyMap<number, PsEntry>): 
   return [...seen].sort((a, b) => a - b);
 }
 
-// Contrato estavel do `ios measure --json`.
+// Stable contract of `ios measure --json`.
 export type IosMeasurement = Readonly<{
   platform: 'ios';
   udid: string;
@@ -208,18 +208,18 @@ export async function measureSim(query: string, ctx: RuntimeContext = {}): Promi
   const simctl = createSimctl({ exec: rt.exec, sleep: rt.sleep, now: rt.now });
   const device = await simctl.findDevice(query);
   if (device.state !== 'Booted') {
-    throw new DevslimError(`simulador ${device.name} (${device.udid}) nao esta bootado (estado ${device.state}); nada a medir`);
+    throw new DevslimError(`simulator ${device.name} (${device.udid}) is not booted (state ${device.state}); nothing to measure`);
   }
   const pat = `${device.udid}/data/var/run/launchd_bootstrap`;
   const pg = await stdoutOf(() => rt.exec('pgrep', ['-f', pat], { timeoutMs: 10_000 }));
   const rootLine = pg?.split(/\r?\n/).map((l) => l.trim()).find((l) => /^\d+$/.test(l));
   if (rootLine === undefined) {
-    throw new DevslimError(`launchd_sim de ${device.name} (${device.udid}) nao encontrado (pgrep -f "${pat}"); o simulador terminou de bootar?`);
+    throw new DevslimError(`launchd_sim of ${device.name} (${device.udid}) not found (pgrep -f "${pat}"); has the simulator finished booting?`);
   }
   const ps = await stdoutOf(() => rt.exec('ps', ['-axo', 'pid,ppid,%cpu,comm'], { timeoutMs: 30_000 }));
-  if (ps === null) throw new DevslimError('ps -axo pid,ppid,%cpu,comm falhou');
+  if (ps === null) throw new DevslimError('ps -axo pid,ppid,%cpu,comm failed');
   const top = await stdoutOf(() => rt.exec('top', ['-l', '1', '-stats', 'pid,mem'], { timeoutMs: 60_000 }));
-  if (top === null) throw new DevslimError('top -l 1 -stats pid,mem falhou');
+  if (top === null) throw new DevslimError('top -l 1 -stats pid,mem failed');
   const table = parsePsTable(ps);
   const mem = parseTopMem(top);
   const pids = processTree(Number(rootLine), table);
@@ -245,7 +245,7 @@ export async function measureAvd(avdName: string, ctx: RuntimeContext = {}): Pro
   const avd = findAvd(avdName, { env: rt.env });
   const adb = rt.adb();
   const serial = await findAvdSerial(adb, avd.name);
-  if (serial === null) throw new DevslimError(`AVD ${avd.name} nao esta rodando (nenhum emulador no adb responde com esse nome)`);
+  if (serial === null) throw new DevslimError(`AVD ${avd.name} is not running (no emulator in adb answers with that name)`);
   const entry = loadSession(rt.env).find((e) => e.platform === 'android' && e.serial === serial && e.avd === avd.name);
   const pid = await findQemuPid(avd.name, { exec: rt.exec, sessionPid: entry?.pid ?? null });
   const host = pid === null ? Object.freeze({ footprintMb: null, footprintHeaderMb: null, rssMb: null }) : await measureAndroidHost(pid, { exec: rt.exec });

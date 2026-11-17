@@ -2,9 +2,9 @@ import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { getValue, parseIni } from './configIni.ts';
 
-// O que o emulador de fato usou no ultimo boot. `hardware-qemu.ini` e escrito
-// pelo emulador a cada lancamento; o `-memory` pedido pode perder para um piso
-// interno (medido: -memory 2048 virou hw.ramSize = 2560 num pixel_7 1080x2400@420).
+// What the emulator actually used on the last boot. `hardware-qemu.ini` is written
+// by the emulator on every launch; the requested `-memory` can lose to an internal
+// floor (measured: -memory 2048 became hw.ramSize = 2560 on a pixel_7 1080x2400@420).
 
 // `2G`, `2048`, `2048M`, `2048MB` -> MB.
 export function parseRamMb(value: string | undefined): number | null {
@@ -17,7 +17,7 @@ export function parseRamMb(value: string | undefined): number | null {
 
 export type EffectiveHardware = Readonly<{ ramMb: number | null; gpu: string | null }>;
 
-// null = sem hardware-qemu.ini legivel (AVD nao bootou desde o ultimo tune).
+// null = no readable hardware-qemu.ini (AVD not booted since the last tune).
 export function readEffectiveHardware(avdDir: string): EffectiveHardware | null {
   let text: string;
   try {
@@ -30,40 +30,40 @@ export function readEffectiveHardware(avdDir: string): EffectiveHardware | null 
   return Object.freeze({ ramMb: parseRamMb(getValue(doc, 'hw.ramSize')), gpu: gpu === undefined || gpu === '' ? null : gpu });
 }
 
-// Pisos de RAM vistos (2026-11-17, API 35): sem -lowram o emulador eleva
-// qualquer -memory abaixo deles. Sao duas observacoes, nao regra: servem so
-// para a nota do plan/tune, nunca para decidir nada.
+// Observed RAM floors (2026-11-17, API 35): without -lowram the emulator raises
+// any -memory below them. These are two observations, not a rule: they only feed
+// the plan/tune note, never any decision.
 export const OBSERVED_FLOOR_PHONE_MB = 2560;
 export const OBSERVED_FLOOR_TABLET_MB = 4096;
 
 export type LastBootRam = Readonly<{ requestedMb: number; effectiveMb: number }>;
 
-// RAM do ultimo boot quando o emulador elevou o pedido; null sem
-// hardware-qemu.ini, sem pedido conhecido ou sem elevacao.
+// Last boot RAM when the emulator raised the request; null without
+// hardware-qemu.ini, without a known request or without a raise.
 export function lastBootRaise(avdDir: string, requestedMb: number | null): LastBootRam | null {
   const effectiveMb = readEffectiveHardware(avdDir)?.ramMb ?? null;
   if (effectiveMb === null || requestedMb === null || effectiveMb <= requestedMb) return null;
   return Object.freeze({ requestedMb, effectiveMb });
 }
 
-// Uma linha para plan/tune: o pedido deve ser elevado. So abaixo do piso de
-// phone e sem lowram; com elevacao vista neste AVD, cita ela no lugar dos
-// pisos genericos (e cala se o pedido ja passa dela).
+// One line for plan/tune: the request will likely be raised. Only below the phone
+// floor and without lowram; with a raise seen on this AVD, cites it instead of the
+// generic floors (and stays quiet if the request already exceeds it).
 export function ramFloorNote(profile: Readonly<{ ramMb: number; lowRam: boolean }>, lastBoot: LastBootRam | null = null): string | null {
   if (profile.lowRam || profile.ramMb >= OBSERVED_FLOOR_PHONE_MB) return null;
   if (lastBoot !== null && profile.ramMb >= lastBoot.effectiveMb) return null;
-  const tail = '; --lowram faz o pedido valer (o guest passa a se declarar aparelho de pouca RAM)';
+  const tail = '; --lowram makes the request stick (the guest then reports itself as a low-RAM device)';
   if (lastBoot !== null) {
-    return `nota: no ultimo boot deste AVD o emulador elevou ${lastBoot.requestedMb} MB para ${lastBoot.effectiveMb} MB; o pedido de ${profile.ramMb} MB deve subir de novo${tail}`;
+    return `note: on this AVD's last boot the emulator raised ${lastBoot.requestedMb} MB to ${lastBoot.effectiveMb} MB; the ${profile.ramMb} MB request will likely be raised again${tail}`;
   }
   return (
-    `nota: o emulador deve elevar a RAM pedida de ${profile.ramMb} MB ` +
-    `(pisos observados: ${OBSERVED_FLOOR_PHONE_MB} MB em phone, ${OBSERVED_FLOOR_TABLET_MB} MB em tablet 2560x1600)${tail}`
+    `note: the emulator will likely raise the requested RAM of ${profile.ramMb} MB ` +
+    `(observed floors: ${OBSERVED_FLOOR_PHONE_MB} MB on phone, ${OBSERVED_FLOOR_TABLET_MB} MB on a 2560x1600 tablet)${tail}`
   );
 }
 
-// GPU por software (CPU e RAM altas). Medido: `-gpu auto` do argent caiu em
-// lavapipe num AVD com hw.gpu.mode=host no config.ini.
+// Software GPU (high CPU and RAM). Measured: argent's `-gpu auto` fell back to
+// lavapipe on an AVD with hw.gpu.mode=host in config.ini.
 export const SOFTWARE_GPU_MODES = Object.freeze(['lavapipe', 'software', 'guest'] as const);
 
 export function isSoftwareGpu(mode: string): boolean {
@@ -71,9 +71,9 @@ export function isSoftwareGpu(mode: string): boolean {
   return m.startsWith('swiftshader') || (SOFTWARE_GPU_MODES as readonly string[]).includes(m);
 }
 
-// Linha do log do emulador: `INFO         | Increasing RAM size to 2560MB`.
-// Varias ocorrencias (log em append): vale a ultima. `line` vem com os
-// espacos colapsados, para citar no aviso do up.
+// Emulator log line: `INFO         | Increasing RAM size to 2560MB`.
+// Several occurrences (append-only log): the last one wins. `line` comes with
+// whitespace collapsed, for quoting in the up warning.
 export function parseRamIncreaseLine(logText: string): { mb: number; line: string } | null {
   let last: { mb: number; line: string } | null = null;
   for (const m of logText.matchAll(/^.*?Increasing RAM size to\s*(\d+)\s*MB.*$/gim)) {
@@ -86,7 +86,7 @@ export function parseRamIncreaseMb(logText: string): number | null {
   return parseRamIncreaseLine(logText)?.mb ?? null;
 }
 
-// Tamanho atual do arquivo (0 se nao existe): marca onde comeca o log deste boot.
+// Current file size (0 if missing): marks where this boot's log starts.
 export function fileSize(path: string): number {
   try {
     return statSync(path).size;
@@ -95,7 +95,7 @@ export function fileSize(path: string): number {
   }
 }
 
-// Le o log a partir de `offset` (o que este boot escreveu) e aplica o parser.
+// Reads the log from `offset` (what this boot wrote) and applies the parser.
 export function ramIncreaseLineFromLog(logFile: string, offset = 0): { mb: number; line: string } | null {
   let fd: number;
   try {

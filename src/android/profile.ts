@@ -24,15 +24,15 @@ export type AndroidProfile = Readonly<{
   screen: Screen;
   port: number | null;
   capabilities: readonly Capability[];
-  // -grpc <porta> -grpc-use-token: o emulador grava o running ini que o argent le.
-  // State antigo sem o campo = true.
+  // -grpc <port> -grpc-use-token: the emulator writes the running ini argent reads.
+  // Old state without the field = true.
   grpc: boolean;
 }>;
 
 export type AndroidProfileOptions = {
   ramMb?: number;
   aggressive?: boolean;
-  // -lowram sem mexer na RAM. Ausente = o que --aggressive diz.
+  // -lowram without touching RAM. Absent = whatever --aggressive says.
   lowRam?: boolean;
   gpu?: string;
   vulkan?: boolean;
@@ -42,17 +42,17 @@ export type AndroidProfileOptions = {
   grpc?: boolean;
 };
 
-// "keep" ou "LxA@dpi", ex. 720x1600@320.
+// "keep" or "WxH@dpi", e.g. 720x1600@320.
 export function parseScreen(text: string): Screen {
   if (text === 'keep') return 'keep';
   const m = /^(\d{3,4})x(\d{3,4})@(\d{2,3})$/.exec(text);
-  if (!m) throw new DevslimError(`tela invalida: ${text} (use keep ou LxA@dpi, ex. 720x1600@320)`);
+  if (!m) throw new DevslimError(`invalid screen: ${text} (use keep or WxH@dpi, e.g. 720x1600@320)`);
   const [width, height, density] = [Number(m[1]), Number(m[2]), Number(m[3])];
   if (width < 240 || height < 240 || width > 4096 || height > 4096) {
-    throw new DevslimError(`tela invalida: ${text} (largura e altura entre 240 e 4096)`);
+    throw new DevslimError(`invalid screen: ${text} (width and height between 240 and 4096)`);
   }
   if (density < 120 || density > 640) {
-    throw new DevslimError(`tela invalida: ${text} (dpi entre 120 e 640)`);
+    throw new DevslimError(`invalid screen: ${text} (dpi between 120 and 640)`);
   }
   return Object.freeze({ width, height, density });
 }
@@ -61,26 +61,26 @@ export function formatScreen(screen: Screen): string {
   return screen === 'keep' ? 'keep' : `${screen.width}x${screen.height}@${screen.density}`;
 }
 
-// Perfil imutavel. RAM e sempre parametro: padrao 2048, --aggressive 1536 + lowRam.
-// lowRam explicito vence o --aggressive. Sem lowRam o emulador eleva qualquer
-// -memory abaixo do piso dele (medido: 2560 MB em phone, 4096 MB em tablet).
+// Immutable profile. RAM is always a parameter: default 2048, --aggressive 1536 + lowRam.
+// An explicit lowRam wins over --aggressive. Without lowRam the emulator raises any
+// -memory below its floor (measured: 2560 MB on phone, 4096 MB on tablet).
 export function buildAndroidProfile(opts: AndroidProfileOptions = {}): AndroidProfile {
   const aggressive = opts.aggressive === true;
   const ramMb = opts.ramMb ?? (aggressive ? AGGRESSIVE_RAM_MB : DEFAULT_RAM_MB);
   if (!Number.isInteger(ramMb) || ramMb < RAM_MIN_MB || ramMb > RAM_MAX_MB) {
-    throw new DevslimError(`RAM invalida: ${ramMb} (inteiro em MB entre ${RAM_MIN_MB} e ${RAM_MAX_MB})`);
+    throw new DevslimError(`invalid RAM: ${ramMb} (integer in MB between ${RAM_MIN_MB} and ${RAM_MAX_MB})`);
   }
 
   const gpu = opts.gpu ?? 'host';
   if (!(GPU_MODES as readonly string[]).includes(gpu)) {
-    throw new DevslimError(`modo de GPU invalido: ${gpu} (validos: ${GPU_MODES.join(', ')})`);
+    throw new DevslimError(`invalid GPU mode: ${gpu} (valid: ${GPU_MODES.join(', ')})`);
   }
 
   let port: number | null = null;
   if (opts.port !== undefined) {
     const p = opts.port;
     if (!Number.isInteger(p) || p < PORT_MIN || p > PORT_MAX || p % 2 !== 0) {
-      throw new DevslimError(`porta invalida: ${p} (numero par entre ${PORT_MIN} e ${PORT_MAX})`);
+      throw new DevslimError(`invalid port: ${p} (even number between ${PORT_MIN} and ${PORT_MAX})`);
     }
     port = p;
   }

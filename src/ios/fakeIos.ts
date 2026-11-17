@@ -3,11 +3,11 @@ import { join } from 'node:path';
 import type { Exec, ExecOptions, ExecResult, FakeCall, FakeSpawnCall, SignalPid, SpawnDetached } from '../exec.ts';
 import { parseStorePlist } from './disabledStore.ts';
 
-// Mundo iOS falso para testes: simuladores em memoria, launchd_sim que le o
-// disabled.plist (diretorio base em tmpdir) ao bootar, relogio e sleep falsos.
-// Nenhum processo real e criado. Responde a xcrun simctl (list, boot,
+// Fake iOS world for tests: in-memory simulators, a launchd_sim that reads the
+// disabled.plist (base directory in tmpdir) on boot, fake clock and sleep.
+// No real process is created. Answers xcrun simctl (list, boot,
 // bootstatus, shutdown, spawn launchctl), plutil, open, sysctl, adb devices,
-// pgrep, ps e top.
+// pgrep, ps and top.
 
 export const FAKE_RUNTIME_ID = 'com.apple.CoreSimulator.SimRuntime.iOS-26-4';
 export const FAKE_SDK = '/fake-sdk';
@@ -18,8 +18,8 @@ export type FakeSimInit = {
   state?: 'Booted' | 'Shutdown' | 'Shutting Down';
   runtimeId?: string;
   isAvailable?: boolean;
-  live?: Readonly<Record<string, boolean>>; // tabela do launchd se ja bootado
-  launchctlList?: string; // saida de `launchctl list` (padrao: so apps da Apple)
+  live?: Readonly<Record<string, boolean>>; // launchd table if already booted
+  launchctlList?: string; // `launchctl list` output (default: Apple apps only)
 };
 
 export const FAKE_APPLE_LAUNCHCTL_LIST =
@@ -31,8 +31,8 @@ export type FakeSim = {
   state: string;
   runtimeId: string;
   isAvailable: boolean;
-  live: Map<string, boolean>; // launchd vivo (vale com Booted)
-  overrides: Map<string, boolean>; // gravado por launchctl disable/enable; sobrevive a reboot
+  live: Map<string, boolean>; // live launchd (applies when Booted)
+  overrides: Map<string, boolean>; // written by launchctl disable/enable; survives reboot
   boots: number;
   launchctlList: string;
 };
@@ -41,13 +41,13 @@ export type FakeIosOptions = {
   storeBase: string;
   simulators?: readonly FakeSimInit[];
   runtimes?: readonly { identifier: string; platform: string; version: string; name?: string }[];
-  storeHonored?: boolean; // launchd_sim le o disabled.plist no boot (padrao true)
-  stubborn?: readonly string[]; // nunca ficam desligados (nem store nem launchctl)
-  launchctlFailures?: Readonly<Record<string, number>>; // label -> quantas vezes launchctl falha antes de pegar
+  storeHonored?: boolean; // launchd_sim reads disabled.plist on boot (default true)
+  stubborn?: readonly string[]; // never stay disabled (neither store nor launchctl)
+  launchctlFailures?: Readonly<Record<string, number>>; // label -> how many times launchctl fails before it sticks
   printFormat?: 'disabled' | 'bool';
-  printSettling?: number; // quantas print-disabled iniciais falham com 124
-  plutilXml?: string | null; // saida do plutil (null = falha)
-  emulators?: readonly string[]; // seriais no `adb devices`
+  printSettling?: number; // how many initial print-disabled calls fail with 124
+  plutilXml?: string | null; // plutil output (null = failure)
+  emulators?: readonly string[]; // serials in `adb devices`
   swap?: string;
   measure?: { pgrep?: string | null; ps?: string | null; top?: string | null };
   openFails?: boolean;
@@ -75,14 +75,14 @@ export function createFakeIos(opts: FakeIosOptions) {
     });
   }
   const concurrency = { now: 0, max: 0 };
-  // Watchers do auto-desligar "vivos" (pid -> linha de comando) e sinais recebidos.
+  // "Live" idle-down watchers (pid -> command line) and signals received.
   const watchers = new Map<number, string>();
   const signals: { pid: number; signal: string }[] = [];
   const spawnCalls: FakeSpawnCall[] = [];
   let nextPid = 60000;
   const spawnDetached: SpawnDetached = async (cmd, args, o) => {
     spawnCalls.push({ cmd, args: [...args], opts: o });
-    if (!args.includes('_idle-watch')) throw new Error(`fake ios spawnDetached: comando inesperado ${cmd}`);
+    if (!args.includes('_idle-watch')) throw new Error(`fake ios spawnDetached: unexpected command ${cmd}`);
     const pid = nextPid++;
     watchers.set(pid, [cmd, ...args].join(' '));
     return { pid };
@@ -137,7 +137,7 @@ export function createFakeIos(opts: FakeIosOptions) {
       return fail(`Could not ${verb} service: 5: Input/output error`, 5);
     }
     const value = verb === 'disable';
-    if (value && stubborn.has(label)) return ok(); // exit 0 mas nao pega
+    if (value && stubborn.has(label)) return ok(); // exit 0 but does not stick
     sim.overrides.set(label, value);
     sim.live.set(label, value);
     return ok();
@@ -189,7 +189,7 @@ export function createFakeIos(opts: FakeIosOptions) {
     calls.push(call);
     let res: Partial<ExecResult> | undefined;
     if (cmd === 'xcrun' && args[0] === 'simctl') res = await simctl(args.slice(1));
-    else if (cmd === 'plutil') res = opts.plutilXml == null ? fail('plutil: arquivo invalido', 1) : ok(opts.plutilXml);
+    else if (cmd === 'plutil') res = opts.plutilXml == null ? fail('plutil: invalid file', 1) : ok(opts.plutilXml);
     else if (cmd === 'open' && args.join(' ') === '-a Simulator') res = opts.openFails ? fail('Unable to find application named Simulator') : ok();
     else if (cmd === 'sysctl') res = ok(`${opts.swap ?? 'total = 2048.00M  used = 100.00M  free = 1948.00M  (encrypted)'}\n`);
     else if (cmd === join(FAKE_SDK, 'platform-tools', 'adb') && args[0] === 'devices') {
@@ -199,12 +199,12 @@ export function createFakeIos(opts: FakeIosOptions) {
     } else if (cmd === 'pgrep') res = opts.measure?.pgrep == null ? { code: 1 } : ok(opts.measure.pgrep);
     else if (cmd === 'ps') res = opts.measure?.ps == null ? { code: 1 } : ok(opts.measure.ps);
     else if (cmd === 'top') res = opts.measure?.top == null ? { code: 1 } : ok(opts.measure.top);
-    if (res === undefined) throw new Error(`fake ios: chamada inesperada: ${cmd} ${args.join(' ')}`);
+    if (res === undefined) throw new Error(`fake ios: unexpected call: ${cmd} ${args.join(' ')}`);
     return Object.freeze({ code: 0, signal: null, stdout: '', stderr: '', ...res });
   }) as Exec & { calls: FakeCall[] };
   exec.calls = calls;
 
-  // Comandos simctl emitidos (sem "xcrun simctl"), na ordem.
+  // simctl commands issued (without "xcrun simctl"), in order.
   const simctlCommands = () => calls.filter((c) => c.cmd === 'xcrun').map((c) => c.args.slice(1).join(' '));
 
   return {
@@ -229,7 +229,7 @@ export function createFakeIos(opts: FakeIosOptions) {
     sleeps,
     now: () => clock.t,
     date: () => new Date('2026-11-16T12:00:00.000Z'),
-    // adb "instalado" em /fake-sdk so quando o teste passa ANDROID_HOME=/fake-sdk.
+    // adb "installed" in /fake-sdk only when the test passes ANDROID_HOME=/fake-sdk.
     fileExists: (p: string) => p === join(FAKE_SDK, 'platform-tools', 'adb'),
   };
 }

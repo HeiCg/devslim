@@ -8,15 +8,15 @@ import { listStates } from './state.ts';
 import { stopIdleWatcher } from './idle.ts';
 import { avdLiveness, listSimDevices, sessionStatus, type SessionStatus } from './status.ts';
 
-// Comandos de topo: `devslim down`, `devslim prune` e `devslim measure` cobrem Android e iOS.
+// Top-level commands: `devslim down`, `devslim prune` and `devslim measure` cover Android and iOS.
 
-// result 'skipped': com --force e nada vivo na sessao daquela plataforma, a
-// ferramenta dela faltou (sem SDK Android, sem Xcode); name e id vazios, o
-// motivo vai em detail e num aviso em stderr. Nao conta como falha.
+// result 'skipped': with --force and nothing alive in the session for that platform, its
+// tooling was missing (no Android SDK, no Xcode); name and id empty, the
+// reason goes in detail and in a stderr warning. Does not count as a failure.
 export type TopDownOutcome = Readonly<{
   platform: 'android' | 'ios';
   name: string;
-  id: string; // serial ou UDID
+  id: string; // serial or UDID
   registered: boolean;
   result: DownOutcome['result'] | DownSimOutcome['result'] | 'skipped';
   detail?: string;
@@ -34,20 +34,20 @@ const failedFor = (s: SessionStatus, err: unknown): TopDownOutcome =>
 const skippedFor = (platform: 'android' | 'ios', err: unknown): TopDownOutcome =>
   Object.freeze({ platform, name: '', id: '', registered: false, result: 'skipped', detail: (err as Error).message });
 
-// Por que uma entrada da sessao e morta (mesma deteccao do STALE do status).
+// Why a session entry is dead (same detection as the status STALE).
 export function staleDetail(platform: 'android' | 'ios'): string {
-  return platform === 'android' ? 'sem lock nem qemu rodando' : 'simulador desligado ou inexistente';
+  return platform === 'android' ? 'no lock and no qemu running' : 'simulator shut down or missing';
 }
 
 function skipped(rt: Runtime, platform: 'android' | 'ios', err: unknown): TopDownOutcome {
   const o = skippedFor(platform, err);
-  rt.stderr(`devslim: aviso: down --force pulou ${platform}: ${o.detail}\n`);
+  rt.stderr(`devslim: warning: down --force skipped ${platform}: ${o.detail}\n`);
   return o;
 }
 
-// Desliga tudo que a sessao registrou. Entradas mortas (status `stale`, sem adb)
-// saem da sessao sem nenhum comando no device; o resto vai para downAvd/downSim.
-// `force` repassa para os dois (desliga tambem o que o devslim nao subiu).
+// Shuts down everything the session recorded. Dead entries (status `stale`, no adb)
+// leave the session without any device command; the rest goes to downAvd/downSim.
+// `force` is passed to both (also shuts down what devslim did not start).
 export async function downAll(ctx: IosContext & { force?: boolean } = {}): Promise<TopDownOutcome[]> {
   const rt = resolveRuntime(ctx);
   const force = ctx.force === true;
@@ -79,8 +79,8 @@ export async function downAll(ctx: IosContext & { force?: boolean } = {}): Promi
       out.push(...(await downAvd(undefined, { ...ctx, force })).map(fromAndroid));
     } catch (err) {
       if (!(err instanceof DevslimError)) throw err;
-      // Entrada viva que nao deu para desligar = failed. So --force e nada
-      // nosso no Android (ex.: sem SDK) = plataforma pulada, avisada.
+      // A live entry that could not be shut down = failed. Only --force and nothing
+      // of ours on Android (e.g. no SDK) = platform skipped, with a warning.
       if (liveAndroid.length > 0) out.push(...liveAndroid.map((s) => failedFor(s, err)));
       else out.push(skipped(rt, 'android', err));
     }
@@ -100,19 +100,19 @@ export async function downAll(ctx: IosContext & { force?: boolean } = {}): Promi
 export type PruneOutcome = Readonly<{
   platform: 'android' | 'ios';
   name: string;
-  id: string; // serial ou UDID
+  id: string; // serial or UDID
   startedAt: string;
   detail: string;
-  // Registro do auto-desligar que saiu junto com a entrada; o watcher nao
-  // recebe sinal (sai sozinho ao ver o device parado ou a entrada sumida).
+  // Idle-down record removed along with the entry; the watcher gets no
+  // signal (it exits on its own once it sees the device stopped or the entry gone).
   idleDown: Readonly<{ ms: number; watcherPid: number }> | null;
 }>;
 
-// `devslim prune`: tira da sessao as entradas cujo device ja nao roda (a mesma
-// deteccao do STALE do status), com o registro do auto-desligar delas. Nunca
-// desliga device, nunca sinaliza processo, nunca apaga state. So remove a
-// entrada exata que foi julgada morta (mesmo pid e startedAt): um `up` que
-// registrou de novo no meio do caminho fica.
+// `devslim prune`: removes from the session the entries whose device is no longer running
+// (same detection as the status STALE), along with their idle-down record. Never
+// shuts down a device, never signals a process, never deletes state. Only removes the
+// exact entry judged dead (same pid and startedAt): an `up` that
+// recorded again in the meantime stays.
 export async function pruneSession(ctx: IosContext = {}): Promise<PruneOutcome[]> {
   const rt = resolveRuntime(ctx);
   const entries = loadSession(rt.env);
@@ -138,8 +138,8 @@ export async function pruneSession(ctx: IosContext = {}): Promise<PruneOutcome[]
 
 export type AnyMeasurement = AndroidMeasurement | IosMeasurement;
 
-// Mede tudo que esta rodando: AVDs com state ou na sessao (rodando por lock ou
-// pgrep, sem adb) e simuladores bootados. Falha de um device vira aviso.
+// Measures everything running: AVDs with state or in the session (running by lock or
+// pgrep, no adb) and booted simulators. A failure on one device becomes a warning.
 export async function measureAll(ctx: IosContext = {}): Promise<AnyMeasurement[]> {
   const rt = resolveRuntime(ctx);
   const out: AnyMeasurement[] = [];
@@ -150,7 +150,7 @@ export async function measureAll(ctx: IosContext = {}): Promise<AnyMeasurement[]
     try {
       out.push(await measureAvd(avd, ctx));
     } catch (err) {
-      rt.stderr(`devslim: aviso: measure de ${avd} falhou: ${(err as Error).message}\n`);
+      rt.stderr(`devslim: warning: measure of ${avd} failed: ${(err as Error).message}\n`);
     }
   }
   for (const d of (await listSimDevices(rt)) ?? []) {
@@ -158,7 +158,7 @@ export async function measureAll(ctx: IosContext = {}): Promise<AnyMeasurement[]
     try {
       out.push(await measureSim(d.udid, ctx));
     } catch (err) {
-      rt.stderr(`devslim: aviso: measure de ${d.name} (${d.udid}) falhou: ${(err as Error).message}\n`);
+      rt.stderr(`devslim: warning: measure of ${d.name} (${d.udid}) failed: ${(err as Error).message}\n`);
     }
   }
   return out;

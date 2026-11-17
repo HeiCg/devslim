@@ -72,7 +72,7 @@ function iosState(udid: string, name: string, opts: { capabilities?: string[] } 
 
 type Sim = { udid: string; name: string; state: string };
 
-// qemu: pid -> linha de comando, para `pgrep -fl qemu-system` e `ps -o command= -p`.
+// qemu: pid -> command line, for `pgrep -fl qemu-system` and `ps -o command= -p`.
 function fakeExec(o: { sims?: Sim[]; pgrep?: Record<string, string>; simctlFails?: boolean; qemu?: Record<string, string> } = {}) {
   return createFakeExec((c: FakeCall) => {
     if (c.cmd === 'pgrep' && c.args.join(' ') === '-fl qemu-system') {
@@ -99,7 +99,7 @@ function fakeExec(o: { sims?: Sim[]; pgrep?: Record<string, string>; simctlFails
 }
 
 const noAdb = (calls: FakeCall[]) => {
-  for (const c of calls) assert.doesNotMatch(`${c.cmd} ${c.args.join(' ')}`, /\badb\b/, 'status nao chama adb');
+  for (const c of calls) assert.doesNotMatch(`${c.cmd} ${c.args.join(' ')}`, /\badb\b/, 'status does not call adb');
 };
 
 function scenario() {
@@ -107,13 +107,13 @@ function scenario() {
   makeAvd('baked-api35', { baked: true, lock: true });
   makeAvd('pgrep-api35', { gpu: 'swiftshader_indirect' });
   makeAvd('plain-api35', { tuned: false });
-  // state de AVD que sumiu do disco
-  recordAndroidTune('sumiu-api35', { avdDir: join(avdHome, 'sumiu-api35.avd'), originalConfigIni: 'x', originalConfigSha256: 'y', profile: buildAndroidProfile({}) }, { env });
+  // state of an AVD gone from disk
+  recordAndroidTune('removed-api35', { avdDir: join(avdHome, 'removed-api35.avd'), originalConfigIni: 'x', originalConfigSha256: 'y', profile: buildAndroidProfile({}) }, { env });
 
   iosState(UDID, 'QA-iPhone17');
   seedStore(UDID, ALL.map((l): [string, boolean] => [l, true]));
   iosState(OTHER, 'QA-iPhone17b', { capabilities: ['push'] });
-  seedStore(OTHER, ALL.slice(0, 10).map((l): [string, boolean] => [l, true])); // perdeu entradas (erase)
+  seedStore(OTHER, ALL.slice(0, 10).map((l): [string, boolean] => [l, true])); // lost entries (erase)
 
   recordSession({ platform: 'android', avd: 'pgrep-api35', serial: 'emulator-5556', pid: 4000, port: 5556, startedAt: 'a' }, env);
   recordSession({ platform: 'android', avd: 'gone-api35', serial: 'emulator-5558', pid: 4001, port: 5558, startedAt: 'b' }, env);
@@ -132,7 +132,7 @@ function scenario() {
   return { exec, ctx };
 }
 
-test('status iOS: bootados + devices com state; contagem no store e drift', async () => {
+test('status iOS: booted + devices with state; store count and drift', async () => {
   const { ctx, exec } = scenario();
   const s = await collectStatus(ctx);
   assert.deepEqual(
@@ -149,11 +149,11 @@ test('status iOS: bootados + devices com state; contagem no store e drift', asyn
   noAdb(exec.calls);
 });
 
-test('status Android: so AVDs com state; tunado/RAM/gpu, baked, rodando por lock e por pgrep', async () => {
+test('status Android: only AVDs with state; tuned/RAM/gpu, baked, running by lock and by pgrep', async () => {
   const { ctx, exec } = scenario();
   const s = await collectStatus(ctx);
   const by = Object.fromEntries(s.android.map((a) => [a.avd, a]));
-  assert.deepEqual(Object.keys(by), ['baked-api35', 'pgrep-api35', 'sumiu-api35', 'tuned-api35']);
+  assert.deepEqual(Object.keys(by), ['baked-api35', 'pgrep-api35', 'removed-api35', 'tuned-api35']);
   assert.deepEqual(
     [by['tuned-api35'].tuned, by['tuned-api35'].ramMb, by['tuned-api35'].gpu, by['tuned-api35'].baked, by['tuned-api35'].running],
     [true, 3072, 'host', false, false],
@@ -165,14 +165,14 @@ test('status Android: so AVDs com state; tunado/RAM/gpu, baked, rodando por lock
   assert.deepEqual(by['pgrep-api35'].runningBy, { lock: false, pgrep: true });
   assert.equal(by['pgrep-api35'].pid, 61234);
   assert.equal(by['pgrep-api35'].gpu, 'swiftshader_indirect');
-  assert.equal(by['sumiu-api35'].exists, false);
-  assert.equal(by['sumiu-api35'].running, false);
+  assert.equal(by['removed-api35'].exists, false);
+  assert.equal(by['removed-api35'].running, false);
   const pg = exec.calls.filter((c) => c.cmd === 'pgrep').map((c) => c.args[1]);
   assert.ok(pg.includes('qemu-system.*-avd baked-api35( |$)'));
   noAdb(exec.calls);
 });
 
-test('status sessao: entradas mortas marcadas stale; nada e removido; swap', async () => {
+test('status session: dead entries marked stale; nothing is removed; swap', async () => {
   const { ctx } = scenario();
   const s = await collectStatus(ctx);
   assert.deepEqual(
@@ -184,12 +184,12 @@ test('status sessao: entradas mortas marcadas stale; nada e removido; swap', asy
       ['ios', 'QA-iPhone17b', OTHER, false, true],
     ],
   );
-  assert.equal(loadSession(env).length, 4, 'status e somente leitura');
+  assert.equal(loadSession(env).length, 4, 'status is read-only');
   assert.deepEqual(s.swap, { usedMb: 17722.1, totalMb: 18432, percent: 96.1 });
   assert.equal(s.at, '2026-11-16T12:00:00.000Z');
 });
 
-test('status sem Xcode: iOS vem do state com estado unknown, sessao iOS nao vira stale', async () => {
+test('status without Xcode: iOS comes from the state with state unknown, iOS session does not become stale', async () => {
   iosState(UDID, 'QA-iPhone17');
   recordSession({ platform: 'ios', avd: 'QA-iPhone17', serial: UDID, pid: 0, port: 0, startedAt: 'c' }, env);
   const exec = fakeExec({ simctlFails: true });
@@ -198,7 +198,7 @@ test('status sem Xcode: iOS vem do state com estado unknown, sessao iOS nao vira
   assert.deepEqual(s.session.map((e) => [e.alive, e.stale]), [[true, false]]);
 });
 
-test('cli status --json: chaves exatas e estaveis; texto uma linha por device; sem adb', async () => {
+test('cli status --json: exact and stable keys; text one line per device; no adb', async () => {
   const { exec } = scenario();
   const run = async (args: string[]) => {
     let stdout = '';
@@ -230,12 +230,12 @@ test('cli status --json: chaves exatas e estaveis; texto uma linha por device; s
   const lines = t.stdout.trimEnd().split('\n');
   assert.equal(lines.filter((l) => l.startsWith('ios ')).length, 3);
   assert.equal(lines.filter((l) => l.startsWith('android ')).length, 4);
-  assert.equal(lines.filter((l) => l.startsWith('sessao ')).length, 4);
-  assert.match(t.stdout, /^ios QA-iPhone17b \(71DA7575-EE5E-4B6A-82B4-54084F780EA9\) Shutdown: .*store 10\/172 desligados, DRIFT/m);
-  assert.match(t.stdout, /^android baked-api35: .*baked sim, rodando \(lock\)/m);
-  assert.match(t.stdout, /^android pgrep-api35: .*rodando \(pgrep pid 61234\)/m);
-  assert.match(t.stdout, /^sessao android gone-api35 emulator-5558: STALE/m);
-  assert.match(t.stdout, /^swap: 17722\.1 de 18432 MB \(96\.1%\)$/m);
+  assert.equal(lines.filter((l) => l.startsWith('session ')).length, 4);
+  assert.match(t.stdout, /^ios QA-iPhone17b \(71DA7575-EE5E-4B6A-82B4-54084F780EA9\) Shutdown: .*store 10\/172 disabled, DRIFT/m);
+  assert.match(t.stdout, /^android baked-api35: .*baked yes, running \(lock\)/m);
+  assert.match(t.stdout, /^android pgrep-api35: .*running \(pgrep pid 61234\)/m);
+  assert.match(t.stdout, /^session android gone-api35 emulator-5558: STALE/m);
+  assert.match(t.stdout, /^swap: 17722\.1 of 18432 MB \(96\.1%\)$/m);
   assert.equal((await run(['status', 'x'])).code, 2);
   noAdb(exec.calls);
 });
@@ -247,9 +247,9 @@ async function statusOut(ctx: Parameters<typeof collectStatus>[0], exec: ReturnT
   return { report: await collectStatus(ctx), stdout };
 }
 
-test('status: RAM pedida != efetiva (hardware-qemu.ini do ultimo boot) = emulador elevou no texto, ramFloored no JSON; gpu efetiva', async () => {
+test('status: RAM requested != effective (last boot hardware-qemu.ini) = emulator raised it in the text, ramFloored in the JSON; effective gpu', async () => {
   const dir = makeAvd('bench-api35');
-  // Valores do uso real: -memory 2048 virou 2560 (pixel_7 1080x2400@420).
+  // Values from real use: -memory 2048 became 2560 (pixel_7 1080x2400@420).
   writeFileSync(join(dir, 'hardware-qemu.ini'), 'hw.cpu.arch = arm64\nhw.ramSize = 2560\nhw.gpu.mode = host\nvm.heapSize = 576\n');
   const exec = fakeExec({ pgrep: { 'bench-api35': '73808' } });
   const { report, stdout } = await statusOut({ env, exec, storeBase }, exec);
@@ -258,57 +258,57 @@ test('status: RAM pedida != efetiva (hardware-qemu.ini do ultimo boot) = emulado
     { ramMb: a.ramMb, ramRequestedMb: a.ramRequestedMb, ramEffectiveMb: a.ramEffectiveMb, ramFloored: a.ramFloored, gpu: a.gpu, gpuEffective: a.gpuEffective },
     { ramMb: 2048, ramRequestedMb: 2048, ramEffectiveMb: 2560, ramFloored: true, gpu: 'host', gpuEffective: 'host' },
   );
-  assert.match(stdout, /^android bench-api35: tunado \(ram pedida 2048 MB, efetiva 2560 MB \(emulador elevou\), gpu host\), baked nao, rodando \(pgrep pid 73808\) sem anuncio gRPC$/m);
+  assert.match(stdout, /^android bench-api35: tuned \(ram requested 2048 MB, effective 2560 MB \(emulator raised it\), gpu host\), baked no, running \(pgrep pid 73808\) no gRPC advertisement$/m);
   noAdb(exec.calls);
 });
 
-test('status: RAM efetiva igual a pedida; sem hardware-qemu.ini so a pedida; gpu efetiva diferente aparece', async () => {
+test('status: effective RAM equal to requested; without hardware-qemu.ini only the requested one; a different effective gpu shows up', async () => {
   const same = makeAvd('same-api35');
   writeFileSync(join(same, 'hardware-qemu.ini'), 'hw.ramSize = 2048\nhw.gpu.mode = swiftshader_indirect\n');
-  makeAvd('fresh-api35'); // tunado e nunca bootado: sem hardware-qemu.ini
+  makeAvd('fresh-api35'); // tuned and never booted: no hardware-qemu.ini
   const exec = fakeExec();
   const { report, stdout } = await statusOut({ env, exec, storeBase }, exec);
   const by = Object.fromEntries(report.android.map((a) => [a.avd, a]));
   assert.deepEqual([by['same-api35'].ramEffectiveMb, by['same-api35'].ramFloored, by['same-api35'].gpuEffective], [2048, false, 'swiftshader_indirect']);
   assert.deepEqual([by['fresh-api35'].ramRequestedMb, by['fresh-api35'].ramEffectiveMb, by['fresh-api35'].ramFloored, by['fresh-api35'].gpuEffective], [2048, null, false, null]);
-  assert.match(stdout, /^android same-api35: tunado \(ram pedida 2048 MB, efetiva 2048 MB, gpu pedida host, efetiva swiftshader_indirect\), /m);
-  assert.match(stdout, /^android fresh-api35: tunado \(ram pedida 2048 MB, gpu host\), /m);
-  assert.doesNotMatch(stdout, /elevou|piso/);
+  assert.match(stdout, /^android same-api35: tuned \(ram requested 2048 MB, effective 2048 MB, gpu requested host, effective swiftshader_indirect\), /m);
+  assert.match(stdout, /^android fresh-api35: tuned \(ram requested 2048 MB, gpu host\), /m);
+  assert.doesNotMatch(stdout, /raised|floor/);
 });
 
-// lastLaunch: o que o ultimo up/bake pediu de fato (up --ram sem tune).
+// lastLaunch: what the last up/bake actually requested (up --ram without tune).
 function lastLaunch(avd: string, ramMb: number, lowRam = false): void {
   const st = loadState<AndroidState>('android', avd, { env })!;
   saveState('android', avd, { ...st, lastLaunch: { ramMb, lowRam, at: '2026-11-17T09:00:00.000Z' } }, { env });
 }
 
-test('status: up --ram 4096 sem tune (lastLaunch) com efetiva 4096 nao conta como elevado', async () => {
-  const dir = makeAvd('over-api35'); // perfil do tune: 2048
+test('status: up --ram 4096 without tune (lastLaunch) with effective 4096 does not count as raised', async () => {
+  const dir = makeAvd('over-api35'); // tune profile: 2048
   lastLaunch('over-api35', 4096);
   writeFileSync(join(dir, 'hardware-qemu.ini'), 'hw.ramSize = 4096\nhw.gpu.mode = host\n');
   const exec = fakeExec();
   const { report, stdout } = await statusOut({ env, exec, storeBase }, exec);
   const a = report.android[0];
   assert.deepEqual([a.ramRequestedMb, a.ramEffectiveMb, a.ramFloored], [4096, 4096, false]);
-  assert.match(stdout, /^android over-api35: tunado \(ram pedida 4096 MB, efetiva 4096 MB, gpu host\), /m);
-  assert.doesNotMatch(stdout, /elevou/);
+  assert.match(stdout, /^android over-api35: tuned \(ram requested 4096 MB, effective 4096 MB, gpu host\), /m);
+  assert.doesNotMatch(stdout, /raised/);
 });
 
-test('status: lastLaunch 2048 com efetiva 2560 continua elevado; sem lastLaunch cai no perfil do tune', async () => {
-  const raised = makeAvd('raised-api35', { ramMb: 4096 }); // perfil 4096, mas o ultimo up pediu 2048
+test('status: lastLaunch 2048 with effective 2560 is still raised; without lastLaunch falls back to the tune profile', async () => {
+  const raised = makeAvd('raised-api35', { ramMb: 4096 }); // profile 4096, but the last up requested 2048
   lastLaunch('raised-api35', 2048);
   writeFileSync(join(raised, 'hardware-qemu.ini'), 'hw.ramSize = 2560\n');
-  const old = makeAvd('old-api35'); // state antigo, sem o campo: perfil 2048
+  const old = makeAvd('old-api35'); // old state, without the field: profile 2048
   writeFileSync(join(old, 'hardware-qemu.ini'), 'hw.ramSize = 2560\n');
   const exec = fakeExec();
   const { report, stdout } = await statusOut({ env, exec, storeBase }, exec);
   const by = Object.fromEntries(report.android.map((a) => [a.avd, a]));
   assert.deepEqual([by['raised-api35'].ramRequestedMb, by['raised-api35'].ramFloored], [2048, true]);
   assert.deepEqual([by['old-api35'].ramRequestedMb, by['old-api35'].ramFloored], [2048, true]);
-  assert.match(stdout, /^android raised-api35: tunado \(ram pedida 2048 MB, efetiva 2560 MB \(emulador elevou\)/m);
+  assert.match(stdout, /^android raised-api35: tuned \(ram requested 2048 MB, effective 2560 MB \(emulator raised it\)/m);
 });
 
-// Linhas reais (2026-11-16): o argent lanca sem -memory/-cores e com -netfast.
+// Real lines (2026-11-16): argent launches without -memory/-cores and with -netfast.
 const QEMU = '/opt/homebrew/share/android-commandlinetools/emulator/qemu/darwin-aarch64/qemu-system-aarch64';
 const ARGENT_LINE = `${QEMU} -avd qa-tablet-api35 -no-snapshot-load -gpu auto -feature -Vulkan -noaudio -no-boot-anim -netfast -no-metrics -crash-report-mode never`;
 const DEVSLIM_LINE = `${QEMU} -avd bench-api35 -gpu host -memory 2048 -cores 2 -port 5554 -no-window -no-audio -camera-back none -camera-front none -feature -Vulkan -no-boot-anim -no-metrics -no-snapshot`;
@@ -323,34 +323,34 @@ async function statusBoth(exec: ReturnType<typeof fakeExec>, pidAlive: (pid: num
   return { stdout, report: JSON.parse(js) as { android: Array<Record<string, unknown>> } };
 }
 
-test('status: AVD tunado rodando via argent (lavapipe, 4096 MB) = sufixo no texto e launcher no JSON; sem adb', async () => {
+test('status: tuned AVD running via argent (lavapipe, 4096 MB) = suffix in the text and launcher in the JSON; no adb', async () => {
   const dir = makeAvd('qa-tablet-api35');
   writeFileSync(join(dir, 'hardware-qemu.ini'), 'hw.ramSize = 4096\nhw.gpu.mode = lavapipe\n');
   const exec = fakeExec({ pgrep: { 'qa-tablet-api35': '9421' }, qemu: { 9421: ARGENT_LINE } });
   const { stdout, report } = await statusBoth(exec);
   assert.match(
     stdout,
-    /^android qa-tablet-api35: tunado \(ram pedida 2048 MB, efetiva 4096 MB \(emulador elevou\), gpu pedida host, efetiva lavapipe\), baked nao, rodando \(pgrep pid 9421\) lancado por argent sem anuncio gRPC$/m,
+    /^android qa-tablet-api35: tuned \(ram requested 2048 MB, effective 4096 MB \(emulator raised it\), gpu requested host, effective lavapipe\), baked no, running \(pgrep pid 9421\) launched by argent no gRPC advertisement$/m,
   );
   const a = report.android[0];
   assert.deepEqual([a.avd, a.launcher, a.hasState, a.ramFloored, a.gpuEffective], ['qa-tablet-api35', 'argent', true, true, 'lavapipe']);
   noAdb(exec.calls);
 });
 
-test('status: AVD rodando via devslim (assinatura) sem sufixo; parado sem launcher', async () => {
+test('status: AVD running via devslim (signature) without suffix; stopped without launcher', async () => {
   makeAvd('bench-api35');
-  makeAvd('parado-api35');
+  makeAvd('stopped-api35');
   const exec = fakeExec({ pgrep: { 'bench-api35': '73808' }, qemu: { 73808: DEVSLIM_LINE } });
   const { stdout, report } = await statusBoth(exec);
-  assert.match(stdout, /^android bench-api35: tunado \(ram pedida 2048 MB, gpu host\), baked nao, rodando \(pgrep pid 73808\) sem anuncio gRPC$/m);
+  assert.match(stdout, /^android bench-api35: tuned \(ram requested 2048 MB, gpu host\), baked no, running \(pgrep pid 73808\) no gRPC advertisement$/m);
   const by = Object.fromEntries(report.android.map((a) => [a.avd, a]));
   assert.equal(by['bench-api35'].launcher, 'devslim');
-  assert.equal(by['parado-api35'].launcher, null);
-  assert.equal(by['parado-api35'].running, false);
+  assert.equal(by['stopped-api35'].launcher, null);
+  assert.equal(by['stopped-api35'].running, false);
   noAdb(exec.calls);
 });
 
-test('status: AVD sem state rodando aparece com nome, pid, launcher, gpu e RAM efetivas', async () => {
+test('status: running AVD without state shows name, pid, launcher, effective gpu and RAM', async () => {
   makeAvd('tuned-api35');
   const studio = makeAvd('Pixel_9_API_35', { tuned: false });
   writeFileSync(join(studio, 'hardware-qemu.ini'), 'hw.ramSize = 2048\nhw.gpu.mode = host\n');
@@ -362,20 +362,20 @@ test('status: AVD sem state rodando aparece com nome, pid, launcher, gpu e RAM e
     [p.hasState, p.tuned, p.running, p.pid, p.launcher, p.ramEffectiveMb, p.gpuEffective, p.ramRequestedMb, p.gpu],
     [false, false, true, 61000, 'other', 2048, 'host', null, null],
   );
-  assert.match(stdout, /^android Pixel_9_API_35: sem state do devslim \(ram efetiva 2048 MB, gpu efetiva host\), baked nao, rodando \(pgrep pid 61000\) lancado por fora do devslim sem anuncio gRPC$/m);
+  assert.match(stdout, /^android Pixel_9_API_35: no devslim state \(effective ram 2048 MB, effective gpu host\), baked no, running \(pgrep pid 61000\) launched outside devslim no gRPC advertisement$/m);
   noAdb(exec.calls);
 });
 
-test('status: AVD sem state rodando sem hardware-qemu.ini e sem diretorio = so nome, pid e launcher', async () => {
+test('status: running AVD without state, hardware-qemu.ini or directory = only name, pid and launcher', async () => {
   const exec = fakeExec({ pgrep: { 'qa-tablet-api35': '9421' }, qemu: { 9421: ARGENT_LINE } });
   const { stdout, report } = await statusBoth(exec);
   const a = report.android[0];
   assert.deepEqual([a.avd, a.exists, a.hasState, a.pid, a.launcher, a.ramEffectiveMb, a.gpuEffective], ['qa-tablet-api35', false, false, 9421, 'argent', null, null]);
-  assert.match(stdout, /^android qa-tablet-api35: sem state do devslim, AVD nao encontrado, rodando \(pgrep pid 9421\) lancado por argent sem anuncio gRPC$/m);
-  assert.doesNotMatch(stdout, /android: nenhum AVD com state/);
+  assert.match(stdout, /^android qa-tablet-api35: no devslim state, AVD not found, running \(pgrep pid 9421\) launched by argent no gRPC advertisement$/m);
+  assert.doesNotMatch(stdout, /android: no AVD with state/);
 });
 
-// Anuncio do emulador: avd/running/pid_<pid>.ini (HOME=root no env).
+// Emulator advertisement: avd/running/pid_<pid>.ini (HOME=root in env).
 const RUNNING_FIXTURE = readFileSync(new URL('./fixtures/running-pid.ini', import.meta.url), 'utf8');
 const DEVSLIM_GRPC_LINE = DEVSLIM_LINE.replace('-port 5554', '-port 5554 -grpc 8554 -grpc-use-token');
 
@@ -385,40 +385,40 @@ function announce(text: string, pid = 73900): void {
   writeFileSync(join(dir, `pid_${pid}.ini`), text);
 }
 
-test('status: emulador anunciado = advertised true, grpcPort, sem sufixo; token nunca aparece; sem adb', async () => {
+test('status: advertised emulator = advertised true, grpcPort, no suffix; token never shows; no adb', async () => {
   makeAvd('bench-api35');
-  makeAvd('parado-api35');
+  makeAvd('stopped-api35');
   announce(RUNNING_FIXTURE);
-  announce(RUNNING_FIXTURE.replace('avd.name=bench-api35', 'avd.name=parado-api35'), 1); // entrada velha de AVD parado
+  announce(RUNNING_FIXTURE.replace('avd.name=bench-api35', 'avd.name=stopped-api35'), 1); // old entry of a stopped AVD
   const exec = fakeExec({ pgrep: { 'bench-api35': '73808' }, qemu: { 73808: DEVSLIM_GRPC_LINE } });
   const { stdout, report } = await statusBoth(exec);
-  assert.match(stdout, /^android bench-api35: tunado \(ram pedida 2048 MB, gpu host\), baked nao, rodando \(pgrep pid 73808\)$/m);
+  assert.match(stdout, /^android bench-api35: tuned \(ram requested 2048 MB, gpu host\), baked no, running \(pgrep pid 73808\)$/m);
   const by = Object.fromEntries(report.android.map((a) => [a.avd, a]));
   assert.deepEqual([by['bench-api35'].advertised, by['bench-api35'].grpcPort, by['bench-api35'].launcher], [true, 8554, 'devslim']);
-  assert.deepEqual([by['parado-api35'].advertised, by['parado-api35'].grpcPort], [null, null], 'parado: nada de anuncio');
-  assert.ok(!(stdout + JSON.stringify(report)).includes('abc123'), 'token fora do texto e do JSON');
+  assert.deepEqual([by['stopped-api35'].advertised, by['stopped-api35'].grpcPort], [null, null], 'stopped: no advertisement');
+  assert.ok(!(stdout + JSON.stringify(report)).includes('abc123'), 'token not in the text or the JSON');
   noAdb(exec.calls);
 });
 
-test('status: entrada sem token = nao anunciado (sufixo), grpcPort da entrada; sem entrada = grpcPort null', async () => {
+test('status: entry without token = not advertised (suffix), grpcPort from the entry; no entry = grpcPort null', async () => {
   makeAvd('bench-api35');
   announce(RUNNING_FIXTURE.replace('grpc.token=abc123', ''));
   const exec = fakeExec({ pgrep: { 'bench-api35': '73808' }, qemu: { 73808: DEVSLIM_GRPC_LINE } });
   const { stdout, report } = await statusBoth(exec);
-  assert.match(stdout, /^android bench-api35: .*rodando \(pgrep pid 73808\) sem anuncio gRPC$/m);
+  assert.match(stdout, /^android bench-api35: .*running \(pgrep pid 73808\) no gRPC advertisement$/m);
   assert.deepEqual([report.android[0].advertised, report.android[0].grpcPort], [false, 8554]);
   rmSync(join(root, 'Library'), { recursive: true });
   const none = await statusBoth(fakeExec({ pgrep: { 'bench-api35': '73808' }, qemu: { 73808: DEVSLIM_GRPC_LINE } }));
   assert.deepEqual([none.report.android[0].advertised, none.report.android[0].grpcPort], [false, null]);
 });
 
-test('status: pid_<pid>.ini de emulador morto nao conta como anuncio; arquivo fica', async () => {
+test('status: pid_<pid>.ini of a dead emulator does not count as advertisement; file stays', async () => {
   makeAvd('bench-api35');
-  announce(RUNNING_FIXTURE, 73900); // sobra de um boot anterior que caiu
+  announce(RUNNING_FIXTURE, 73900); // leftover from an earlier boot that crashed
   const exec = fakeExec({ pgrep: { 'bench-api35': '73808' }, qemu: { 73808: DEVSLIM_GRPC_LINE } });
   const dead = await statusBoth(exec, (pid) => pid !== 73900);
   assert.deepEqual([dead.report.android[0].advertised, dead.report.android[0].grpcPort], [false, null]);
-  assert.match(dead.stdout, /^android bench-api35: .*rodando \(pgrep pid 73808\) sem anuncio gRPC$/m);
+  assert.match(dead.stdout, /^android bench-api35: .*running \(pgrep pid 73808\) no gRPC advertisement$/m);
   assert.ok(readFileSync(join(root, 'Library', 'Caches', 'TemporaryItems', 'avd', 'running', 'pid_73900.ini'), 'utf8').length > 0);
   const live = await statusBoth(exec, (pid) => pid === 73900);
   assert.deepEqual([live.report.android[0].advertised, live.report.android[0].grpcPort], [true, 8554]);

@@ -18,8 +18,8 @@ export function devslimHome(env: Env = process.env): string {
 }
 
 export function statePath(platform: Platform, id: string, opts: StateOptions = {}): string {
-  if (platform !== 'android' && platform !== 'ios') throw new DevslimError(`plataforma invalida: ${platform}`);
-  if (!ID_RE.test(id) || id === '.' || id === '..') throw new DevslimError(`id de state invalido: ${id}`);
+  if (platform !== 'android' && platform !== 'ios') throw new DevslimError(`invalid platform: ${platform}`);
+  if (!ID_RE.test(id) || id === '.' || id === '..') throw new DevslimError(`invalid state id: ${id}`);
   return join(devslimHome(opts.env), 'state', platform, `${id}.json`);
 }
 
@@ -42,13 +42,13 @@ export function loadState<T = unknown>(platform: Platform, id: string, opts: Sta
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new DevslimError(`state corrompido (JSON invalido): ${path}`);
+    throw new DevslimError(`corrupt state (invalid JSON): ${path}`);
   }
 }
 
-// Ids com state gravado para a plataforma (nomes de AVD ou UDIDs), ordenados.
+// Ids with saved state for the platform (AVD names or UDIDs), sorted.
 export function listStates(platform: Platform, opts: StateOptions = {}): string[] {
-  if (platform !== 'android' && platform !== 'ios') throw new DevslimError(`plataforma invalida: ${platform}`);
+  if (platform !== 'android' && platform !== 'ios') throw new DevslimError(`invalid platform: ${platform}`);
   let names: string[];
   try {
     names = readdirSync(join(devslimHome(opts.env), 'state', platform));
@@ -69,8 +69,8 @@ export function clearState(platform: Platform, id: string, opts: StateOptions = 
   return true;
 }
 
-// State de um AVD tunado. `originalConfigIni` e o texto integral do config.ini
-// antes do primeiro tune; restore devolve esses bytes (conferidos pelo sha256).
+// State of a tuned AVD. `originalConfigIni` is the full config.ini text
+// before the first tune; restore writes those bytes back (checked by sha256).
 export type AndroidState = {
   version: 1;
   platform: 'android';
@@ -81,23 +81,23 @@ export type AndroidState = {
   originalSavedAt: string;
   updatedAt: string;
   profile: AndroidProfile;
-  // Pacotes que NOS desligamos no guest (bake) e o valor anterior de cada
-  // setting que mudamos (previous null = ausente: restore faz delete).
+  // Packages WE disabled in the guest (bake) and the previous value of each
+  // setting we changed (previous null = absent: restore deletes it).
   disabledPackages: string[];
   settings?: SavedSetting[];
   bakedAt?: string;
-  // O que o ultimo `up`/`bake` passou ao emulador (-memory e -lowram). Pode
-  // diferir do perfil (`up --ram X` sem tune); e o "pedido" que se compara com a
-  // RAM efetiva do hardware-qemu.ini. Ausente em state antigo.
+  // What the last `up`/`bake` passed to the emulator (-memory and -lowram). May
+  // differ from the profile (`up --ram X` without tune); it is the "requested" value compared with
+  // the effective RAM in hardware-qemu.ini. Absent in old state.
   lastLaunch?: AndroidLaunchRecord;
 };
 
 export type AndroidLaunchRecord = { ramMb: number; lowRam: boolean; at: string };
 
-// Grava o state do tune. Se ja existe state para o AVD, o original salvo e o
-// do primeiro tune e nunca e sobrescrito (re-tune mantem o primeiro backup).
-// `dropLastLaunch`: o tune reescreve o config.ini e apaga o hardware-qemu.ini
-// daquele lancamento, entao o lastLaunch deixa de valer; sem isso ele fica.
+// Writes the tune state. If the AVD already has state, the saved original is the
+// one from the first tune and is never overwritten (re-tune keeps the first backup).
+// `dropLastLaunch`: tune rewrites config.ini and deletes that launch's
+// hardware-qemu.ini, so lastLaunch no longer applies; without it, it stays.
 export function recordAndroidTune(
   avd: string,
   input: {
@@ -132,16 +132,16 @@ export function recordAndroidTune(
   return { state, preservedOriginal, path };
 }
 
-// Registra o lancamento (up/bake) no state do AVD. Sem state (AVD nunca
-// tunado) nada e criado: devolve null e quem compara cai no config.ini.
+// Records the launch (up/bake) in the AVD state. Without state (AVD never
+// tuned) nothing is created: returns null and comparisons fall back to config.ini.
 export function recordAndroidLaunch(avd: string, launch: AndroidLaunchRecord, opts: StateOptions = {}): string | null {
   const prev = loadState<AndroidState>('android', avd, opts);
   if (prev === null) return null;
   return saveState('android', avd, { ...prev, lastLaunch: { ramMb: launch.ramMb, lowRam: launch.lowRam, at: launch.at } }, opts);
 }
 
-// RAM "pedida" para comparar com a efetiva: a do ultimo up/bake quando o state
-// tem lastLaunch; senao a do perfil do tune; null sem nenhuma das duas.
+// "Requested" RAM to compare with the effective one: the last up/bake one when the state
+// has lastLaunch; else the tune profile one; null without either.
 export function requestedRamMb(st: Pick<AndroidState, 'profile' | 'lastLaunch'> | null | undefined): number | null {
   const launched = st?.lastLaunch?.ramMb;
   if (typeof launched === 'number' && Number.isFinite(launched)) return launched;
@@ -154,9 +154,9 @@ export function launchedRamMb(st: Pick<AndroidState, 'lastLaunch'> | null | unde
   return typeof launched === 'number' && Number.isFinite(launched) ? launched : null;
 }
 
-// State de um simulador iOS enxugado. `backup` tem o valor que cada label
-// gerido tinha no disabled.plist ANTES do primeiro `up` que o mexeu
-// (true/false; null = chave ausente). `off` devolve esses valores.
+// State of a slimmed iOS simulator. `backup` holds the value each managed label
+// had in disabled.plist BEFORE the first `up` that touched it
+// (true/false; null = absent key). `off` restores those values.
 export type IosProfileRecord = {
   capabilities: string[];
   except: string[];
@@ -176,7 +176,7 @@ export type IosState = {
   profile: IosProfileRecord;
 };
 
-// Acrescenta ao backup so labels que ainda nao estao nele: primeiro backup vence.
+// Adds to the backup only labels not yet in it: first backup wins.
 export function recordIosBackup(
   udid: string,
   input: {
@@ -212,15 +212,15 @@ export function recordIosBackup(
   return { state, added, path };
 }
 
-// Grava o que esta no guest agora (depois do bake ou de um restore parcial).
-// Exige state de tune ja existente.
+// Records what is in the guest now (after bake or a partial restore).
+// Requires an existing tune state.
 export function recordAndroidGuest(
   avd: string,
   input: { disabledPackages: readonly string[]; settings: readonly SavedSetting[]; bakedAt?: Date; now?: Date },
   opts: StateOptions = {},
 ): { state: AndroidState; path: string } {
   const prev = loadState<AndroidState>('android', avd, opts);
-  if (prev === null) throw new DevslimError(`sem state de tune para o AVD ${avd}`);
+  if (prev === null) throw new DevslimError(`no tune state for AVD ${avd}`);
   const state: AndroidState = {
     ...prev,
     updatedAt: (input.now ?? new Date()).toISOString(),

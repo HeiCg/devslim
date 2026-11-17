@@ -5,28 +5,28 @@ import { defaultDirExists, findSdkTool, type SdkTool } from './sdk.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
 
-// Tudo que fala com processo, relogio ou SDK entra por aqui; os testes
-// injetam exec/spawn/sleep/relogio falsos.
+// Everything that talks to processes, the clock or the SDK comes in here; tests
+// inject fake exec/spawn/sleep/clock.
 export type RuntimeContext = {
   env?: Env;
   exec?: Exec;
   spawnDetached?: SpawnDetached;
   sleep?: Sleep;
-  now?: () => number; // ms, para timeouts e tempos por etapa
-  date?: () => Date; // carimbo de hora gravado no state
-  fileExists?: (path: string) => boolean; // localizar binarios do SDK
-  dirExists?: (path: string) => boolean; // system image instalada no SDK (create)
-  arch?: string; // process.arch do host: ABI dos atalhos de imagem do create
-  stderr?: (text: string) => void; // avisos
+  now?: () => number; // ms, for timeouts and per-step timings
+  date?: () => Date; // timestamp written to the state
+  fileExists?: (path: string) => boolean; // locate SDK binaries
+  dirExists?: (path: string) => boolean; // system image installed in the SDK (create)
+  arch?: string; // host process.arch: ABI for the create image shortcuts
+  stderr?: (text: string) => void; // warnings
   bootTimeoutMs?: number;
   exitTimeoutMs?: number;
   pollMs?: number;
-  // Diretorio avd/running onde o emulador se anuncia; ausente = padrao da
-  // plataforma (runningIni.ts), null = nao conferir.
+  // avd/running directory where the emulator advertises itself; absent = platform
+  // default (runningIni.ts), null = do not check.
   runningDir?: string | null;
-  // Pid do pid_<pid>.ini ainda vivo? Ausente = process.kill(pid, 0).
+  // Is the pid_<pid>.ini pid still alive? Absent = process.kill(pid, 0).
   pidAlive?: PidAlive;
-  // SIGTERM no watcher do auto-desligar. Ausente = process.kill.
+  // SIGTERM to the idle-down watcher. Absent = process.kill.
   signalPid?: SignalPid;
 };
 

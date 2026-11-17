@@ -34,32 +34,32 @@ test('avdHome: ANDROID_AVD_HOME > ANDROID_USER_HOME/avd > ~/.android/avd', () =>
   assert.equal(avdHome({ HOME: '/h' }), join('/h', '.android', 'avd'));
 });
 
-test('findAvd usa path do <nome>.ini', () => {
+test('findAvd uses path from <name>.ini', () => {
   const home = join(root, 'avd');
-  const elsewhere = join(root, 'outro-lugar', 'x.avd');
+  const elsewhere = join(root, 'elsewhere', 'x.avd');
   makeAvd(home, 'x', { dir: elsewhere, ini: `path=${elsewhere}\n` });
   const info = findAvd('x', { env: { ANDROID_AVD_HOME: home } });
   assert.equal(info.dir, elsewhere);
   assert.equal(info.configPath, join(elsewhere, 'config.ini'));
 });
 
-test('findAvd cai em path.rel e depois em <home>/<nome>.avd', () => {
+test('findAvd falls back to path.rel and then to <home>/<name>.avd', () => {
   const home = join(root, 'avd');
-  makeAvd(home, 'rel', { ini: 'path=/nao/existe\npath.rel=avd/rel.avd\n' });
+  makeAvd(home, 'rel', { ini: 'path=/does/not/exist\npath.rel=avd/rel.avd\n' });
   assert.equal(findAvd('rel', { env: { ANDROID_AVD_HOME: home } }).dir, join(home, 'rel.avd'));
-  makeAvd(home, 'semini', { ini: null });
-  assert.equal(findAvd('semini', { env: { ANDROID_AVD_HOME: home } }).dir, join(home, 'semini.avd'));
+  makeAvd(home, 'noini', { ini: null });
+  assert.equal(findAvd('noini', { env: { ANDROID_AVD_HOME: home } }).dir, join(home, 'noini.avd'));
 });
 
-test('findAvd: AVD inexistente lista os disponiveis; nome invalido e recusado', () => {
+test('findAvd: missing AVD lists the available ones; invalid name is refused', () => {
   const home = join(root, 'avd');
   makeAvd(home, 'bench');
-  assert.throws(() => findAvd('nope', { env: { ANDROID_AVD_HOME: home } }), /disponiveis: bench/);
+  assert.throws(() => findAvd('nope', { env: { ANDROID_AVD_HOME: home } }), /available: bench/);
   assert.throws(() => findAvd('../bench', { env: { ANDROID_AVD_HOME: home } }), DevslimError);
   assert.deepEqual(listAvds({ ANDROID_AVD_HOME: home }), ['bench']);
 });
 
-test('lock: diretorio *.lock = rodando; multiinstance.lock sozinho (arquivo) nao conta', () => {
+test('lock: *.lock directory = running; multiinstance.lock alone (file) does not count', () => {
   const dir = makeAvd(join(root, 'avd'), 'r');
   writeFileSync(join(dir, 'multiinstance.lock'), '');
   assert.equal(isAvdRunning(dir), false);
@@ -69,7 +69,7 @@ test('lock: diretorio *.lock = rodando; multiinstance.lock sozinho (arquivo) nao
   assert.deepEqual(runningLocks(dir), ['cache.img.lock', 'hardware-qemu.ini.lock']);
 });
 
-test('existingRegenerated lista hardware-qemu.ini e snapshots/ quando existem', () => {
+test('existingRegenerated lists hardware-qemu.ini and snapshots/ when present', () => {
   const dir = makeAvd(join(root, 'avd'), 'g');
   assert.deepEqual(existingRegenerated(dir), []);
   writeFileSync(join(dir, 'hardware-qemu.ini'), 'x');

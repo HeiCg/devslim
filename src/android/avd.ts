@@ -8,16 +8,16 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 export type AvdInfo = Readonly<{
   name: string;
-  home: string; // diretorio que contem <nome>.ini e, por padrao, <nome>.avd
-  iniPath: string; // <home>/<nome>.ini (pode nao existir)
-  dir: string; // diretorio <nome>.avd
+  home: string; // directory holding <name>.ini and, by default, <name>.avd
+  iniPath: string; // <home>/<name>.ini (may not exist)
+  dir: string; // <name>.avd directory
   configPath: string; // <dir>/config.ini
 }>;
 
 const NAME_RE = /^[A-Za-z0-9._-]+$/;
 
-// Mesma precedencia do emulador: ANDROID_AVD_HOME, depois
-// ANDROID_USER_HOME/avd, depois ~/.android/avd.
+// Same precedence as the emulator: ANDROID_AVD_HOME, then
+// ANDROID_USER_HOME/avd, then ~/.android/avd.
 export function avdHome(env: Env = process.env): string {
   if (env.ANDROID_AVD_HOME) return env.ANDROID_AVD_HOME;
   if (env.ANDROID_USER_HOME) return join(env.ANDROID_USER_HOME, 'avd');
@@ -47,10 +47,10 @@ function isDir(p: string): boolean {
   }
 }
 
-// Localiza o AVD: <home>/<nome>.ini aponta o diretorio por `path` (ou
-// `path.rel`, relativo ao pai de <home>); sem .ini, cai em <home>/<nome>.avd.
+// Locates the AVD: <home>/<name>.ini points to the directory via `path` (or
+// `path.rel`, relative to the parent of <home>); without .ini, falls back to <home>/<name>.avd.
 export function findAvd(name: string, opts: { env?: Env } = {}): AvdInfo {
-  if (!NAME_RE.test(name)) throw new DevslimError(`nome de AVD invalido: ${name}`);
+  if (!NAME_RE.test(name)) throw new DevslimError(`invalid AVD name: ${name}`);
   const home = avdHome(opts.env);
   const iniPath = join(home, `${name}.ini`);
   const candidates: string[] = [];
@@ -67,17 +67,17 @@ export function findAvd(name: string, opts: { env?: Env } = {}): AvdInfo {
   const dir = candidates.find(isDir);
   if (dir === undefined) {
     const known = listAvds(opts.env);
-    const hint = known.length > 0 ? ` (disponiveis: ${known.join(', ')})` : '';
-    throw new DevslimError(`AVD nao encontrado: ${name} em ${home}${hint}`);
+    const hint = known.length > 0 ? ` (available: ${known.join(', ')})` : '';
+    throw new DevslimError(`AVD not found: ${name} in ${home}${hint}`);
   }
   const configPath = join(dir, 'config.ini');
-  if (!existsSync(configPath)) throw new DevslimError(`AVD ${name} sem config.ini em ${dir}`);
+  if (!existsSync(configPath)) throw new DevslimError(`AVD ${name} has no config.ini in ${dir}`);
   return Object.freeze({ name, home, iniPath, dir, configPath });
 }
 
-// O emulador cria diretorios `*.lock` (ex. hardware-qemu.ini.lock/) enquanto
-// roda e apaga ao sair. `multiinstance.lock` e um arquivo vazio que fica no
-// AVD mesmo com o emulador desligado, entao nao conta como sinal de execucao.
+// The emulator creates `*.lock` directories (e.g. hardware-qemu.ini.lock/) while
+// running and deletes them on exit. `multiinstance.lock` is an empty file that stays in
+// the AVD even with the emulator shut down, so it does not count as a running signal.
 export function runningLocks(avdDir: string): string[] {
   let entries: string[];
   try {
@@ -95,8 +95,8 @@ export function isAvdRunning(avdDir: string): boolean {
   return runningLocks(avdDir).length > 0;
 }
 
-// Artefatos que o emulador regenera e que ficam inconsistentes depois de
-// mexer no config.ini.
+// Artifacts the emulator regenerates and that become inconsistent after
+// editing config.ini.
 export const REGENERATED_ARTIFACTS = Object.freeze(['hardware-qemu.ini', 'snapshots']);
 
 export function existingRegenerated(avdDir: string): string[] {

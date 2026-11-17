@@ -19,7 +19,7 @@ import { createFakeAndroid, type FakeAndroidOptions } from '../src/android/fakeA
 import { main } from '../src/cli.ts';
 import { createFakeIos, type FakeIosOptions } from '../src/ios/fakeIos.ts';
 
-// Ponta a ponta: roda bin/devslim num processo, com AVD fake em tmpdir.
+// End to end: runs bin/devslim in a process, with a fake AVD in tmpdir.
 const BIN = fileURLToPath(new URL('../bin/devslim', import.meta.url));
 const PHONE = readFileSync(new URL('./fixtures/phone.config.ini', import.meta.url));
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -32,7 +32,7 @@ let configPath: string;
 
 const sha = (buf: Buffer | string) => createHash('sha256').update(buf).digest('hex');
 
-// Mapa caminho relativo -> sha256 (ou "dir") de tudo sob `dir`.
+// Map relative path -> sha256 (or "dir") of everything under `dir`.
 function tree(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   if (!existsSync(dir)) return out;
@@ -78,15 +78,15 @@ beforeEach(() => {
   writeFileSync(configPath, PHONE);
   writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.gpu.mode = auto\n');
   writeFileSync(join(avdDir, 'snapshots', 'default_boot', 'ram.bin'), 'ram');
-  writeFileSync(join(avdDir, 'multiinstance.lock'), ''); // existe mesmo com o emulador desligado
+  writeFileSync(join(avdDir, 'multiinstance.lock'), ''); // exists even with the emulator shut down
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-test('--help e --version', () => {
+test('--help and --version', () => {
   const h = run(['--help']);
   assert.equal(h.code, 0);
   assert.match(h.stdout, /devslim android plan <avd>/);
-  for (const c of ['create <nome>', 'up <avd>', 'bake <avd>', 'down \\[<avd>\\]', 'restore <avd> \\[--config-only\\]', 'measure <avd> \\[--json\\]']) {
+  for (const c of ['create <name>', 'up <avd>', 'bake <avd>', 'down \\[<avd>\\]', 'restore <avd> \\[--config-only\\]', 'measure <avd> \\[--json\\]']) {
     assert.match(h.stdout, new RegExp(`devslim android ${c}`), c);
   }
   const v = run(['--version']);
@@ -94,34 +94,34 @@ test('--help e --version', () => {
   assert.equal(v.stdout.trim(), pkg.version);
 });
 
-test('comando desconhecido: erro + help, exit 2', () => {
+test('unknown command: error + help, exit 2', () => {
   const r = run(['frobnicate']);
   assert.equal(r.code, 2);
-  assert.match(r.stderr, /^devslim: comando desconhecido: frobnicate$/m);
-  assert.match(r.stderr, /uso:/);
+  assert.match(r.stderr, /^devslim: unknown command: frobnicate$/m);
+  assert.match(r.stderr, /usage:/);
   assert.equal(run([]).code, 2);
   assert.equal(run(['android', 'explode', 'x']).code, 2);
   assert.equal(run(['android', 'plan']).code, 2);
   assert.equal(run(['android', 'plan', 'fake-api35', '--bogus']).code, 2);
 });
 
-test('plan nao escreve nada e mostra mudancas + linha do emulator', () => {
+test('plan writes nothing and shows changes + emulator line', () => {
   const before = tree(root);
   const r = run(['android', 'plan', 'fake-api35']);
   assert.equal(r.code, 0, r.stderr);
-  assert.deepEqual(tree(root), before, 'nenhum arquivo criado, alterado ou removido');
+  assert.deepEqual(tree(root), before, 'no file created, changed or removed');
   assert.ok(!existsSync(devslimHome));
   assert.match(r.stdout, /hw\.ramSize: 2G -> 2048/);
   assert.match(r.stdout, /hw\.gpu\.mode: auto -> host/);
   assert.match(
     r.stdout,
-    /emulator -avd fake-api35 -gpu host -memory 2048 -cores 2 -grpc 8554 -grpc-use-token -no-window -no-audio -camera-back none -camera-front none -feature -Vulkan -no-boot-anim -no-metrics -no-snapshot \(gRPC 8554 de referencia; porta definida no up\)$/m,
+    /emulator -avd fake-api35 -gpu host -memory 2048 -cores 2 -grpc 8554 -grpc-use-token -no-window -no-audio -camera-back none -camera-front none -feature -Vulkan -no-boot-anim -no-metrics -no-snapshot \(gRPC 8554 for reference; port chosen at up\)$/m,
   );
-  assert.match(r.stdout, /tune apagaria: hardware-qemu\.ini, snapshots/);
+  assert.match(r.stdout, /tune would delete: hardware-qemu\.ini, snapshots/);
   assert.doesNotMatch(r.stdout, /-netfast/);
 });
 
-test('plan --json com flags e --for', () => {
+test('plan --json with flags and --for', () => {
   const app = join(root, 'app');
   mkdirSync(app);
   writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { 'expo-av': '*', 'expo-camera': '*' } }));
@@ -138,34 +138,34 @@ test('plan --json com flags e --for', () => {
   ]);
   assert.equal(out.profile.grpc, true);
   assert.ok(out.changes.some((c: { key: string; to: string }) => c.key === 'hw.lcd.width' && c.to === '720'));
-  // A fixture ja tem audio yes e camera.back emulated: com audio+camera so camera.front muda.
+  // The fixture already has audio yes and camera.back emulated: with audio+camera only camera.front changes.
   const keys = out.changes.map((c: { key: string }) => c.key);
   assert.ok(!keys.includes('hw.audioOutput') && !keys.includes('hw.audioInput'));
   assert.ok(out.changes.some((c: { key: string; from: string; to: string }) => c.key === 'hw.camera.front' && c.from === 'none' && c.to === 'emulated'));
 });
 
-test('plan --no-grpc: sem -grpc/-grpc-use-token, sem sufixo, perfil grpc off; com --port a linha nao leva sufixo', () => {
+test('plan --no-grpc: no -grpc/-grpc-use-token, no suffix, profile grpc off; with --port the line has no suffix', () => {
   const r = run(['android', 'plan', 'fake-api35', '--no-grpc']);
   assert.equal(r.code, 0, r.stderr);
   assert.doesNotMatch(r.stdout, /-grpc/);
-  assert.doesNotMatch(r.stdout, /de referencia/);
-  assert.match(r.stdout, /^perfil: .*vulkan off, grpc off, /m);
+  assert.doesNotMatch(r.stdout, /for reference/);
+  assert.match(r.stdout, /^profile: .*vulkan off, grpc off, /m);
   const j = JSON.parse(run(['android', 'plan', 'fake-api35', '--no-grpc', '--json']).stdout);
   assert.equal(j.profile.grpc, false);
   assert.ok(!j.emulatorArgs.includes('-grpc'));
   const withPort = run(['android', 'plan', 'fake-api35', '--port', '5556']);
   assert.match(withPort.stdout, /-port 5556 -grpc 8556 -grpc-use-token .*-no-snapshot$/m);
-  assert.match(withPort.stdout, /^perfil: .*grpc on, /m);
+  assert.match(withPort.stdout, /^profile: .*grpc on, /m);
 });
 
-test('tune --no-grpc persiste grpc: false no state; plan seguinte herda; state antigo sem o campo = grpc on', () => {
+test('tune --no-grpc persists grpc: false in the state; the next plan inherits; old state without the field = grpc on', () => {
   assert.equal(run(['android', 'tune', 'fake-api35', '--no-grpc']).code, 0);
   const st = JSON.parse(readFileSync(join(devslimHome, 'state', 'android', 'fake-api35.json'), 'utf8'));
   assert.equal(st.profile.grpc, false);
   const inherited = run(['android', 'plan', 'fake-api35']);
-  assert.match(inherited.stdout, /perfil herdado do tune anterior/);
+  assert.match(inherited.stdout, /profile inherited from the previous tune/);
   assert.doesNotMatch(inherited.stdout, /-grpc/);
-  // State gravado antes do campo existir.
+  // State written before the field existed.
   delete st.profile.grpc;
   writeFileSync(join(devslimHome, 'state', 'android', 'fake-api35.json'), JSON.stringify(st));
   const old = run(['android', 'plan', 'fake-api35', '--json']);
@@ -173,38 +173,38 @@ test('tune --no-grpc persiste grpc: false no state; plan seguinte herda; state a
   assert.ok(JSON.parse(old.stdout).emulatorArgs.includes('-grpc-use-token'));
 });
 
-test('--grpc religa sobre o grpc: false salvo; sem flag herda false; tune --grpc persiste true', () => {
+test('--grpc re-enables over the saved grpc: false; without flag inherits false; tune --grpc persists true', () => {
   assert.equal(run(['android', 'tune', 'fake-api35', '--no-grpc']).code, 0);
   const statePath = join(devslimHome, 'state', 'android', 'fake-api35.json');
   assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).profile.grpc, false);
 
   const kept = JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout);
-  assert.equal(kept.profile.grpc, false, 'sem flag: herda o false salvo');
+  assert.equal(kept.profile.grpc, false, 'no flag: inherits the saved false');
   assert.ok(!kept.emulatorArgs.includes('-grpc'));
 
   const on = run(['android', 'plan', 'fake-api35', '--grpc']);
   assert.equal(on.code, 0, on.stderr);
-  assert.match(on.stdout, /perfil herdado do tune anterior/);
-  assert.match(on.stdout, /^perfil: .*grpc on, /m);
+  assert.match(on.stdout, /profile inherited from the previous tune/);
+  assert.match(on.stdout, /^profile: .*grpc on, /m);
   assert.match(on.stdout, /-grpc 8554 -grpc-use-token/);
 
   assert.equal(run(['android', 'tune', 'fake-api35', '--grpc']).code, 0);
-  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).profile.grpc, true, 'tune --grpc grava true');
+  assert.equal(JSON.parse(readFileSync(statePath, 'utf8')).profile.grpc, true, 'tune --grpc writes true');
   assert.equal(JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout).profile.grpc, true);
 });
 
-test('--grpc com --no-grpc = erro de uso em plan, tune, up e bake; nada escrito', () => {
+test('--grpc with --no-grpc = usage error in plan, tune, up and bake; nothing written', () => {
   const before = tree(avdDir);
   for (const sub of ['plan', 'tune', 'up', 'bake']) {
     const r = run(['android', sub, 'fake-api35', '--grpc', '--no-grpc']);
     assert.equal(r.code, 2, `${sub}: ${r.stderr}`);
-    assert.equal(r.stderr.split('\n')[0], 'devslim: --grpc e --no-grpc nao combinam; use so um', sub);
+    assert.equal(r.stderr.split('\n')[0], 'devslim: --grpc and --no-grpc conflict; use only one', sub);
   }
   assert.deepEqual(tree(avdDir), before);
-  assert.ok(!existsSync(join(devslimHome, 'state')), 'tune recusado nao grava state');
+  assert.ok(!existsSync(join(devslimHome, 'state')), 'refused tune writes no state');
 });
 
-test('cli up e bake aceitam --grpc: religa sobre o state salvo com grpc false', async () => {
+test('cli up and bake accept --grpc: re-enables over the saved state with grpc false', async () => {
   assert.equal(run(['android', 'tune', 'fake-api35', '--no-grpc']).code, 0);
   const a = inProcess();
   const up = await a.call(['android', 'up', 'fake-api35', '--grpc']);
@@ -217,7 +217,7 @@ test('cli up e bake aceitam --grpc: religa sobre o state salvo com grpc false', 
   const c = inProcess();
   const plain = await c.call(['android', 'bake', 'fake-api35', '--force']);
   assert.equal(plain.code, 0, plain.stderr);
-  assert.ok(!c.fake.spawnCalls[0].args.includes('-grpc'), 'sem flag: herda grpc false');
+  assert.ok(!c.fake.spawnCalls[0].args.includes('-grpc'), 'no flag: inherits grpc false');
 });
 
 // ---------------------------------------------------------------------------
@@ -225,10 +225,10 @@ test('cli up e bake aceitam --grpc: religa sobre o state salvo com grpc false', 
 
 const lowramState = () => JSON.parse(readFileSync(join(devslimHome, 'state', 'android', 'fake-api35.json'), 'utf8')).profile;
 
-test('--lowram liga -lowram sem mexer na RAM; tune salva; plan herda; --no-lowram sobrepoe', () => {
+test('--lowram turns on -lowram without touching RAM; tune saves; plan inherits; --no-lowram overrides', () => {
   const p = run(['android', 'plan', 'fake-api35', '--lowram']);
   assert.equal(p.code, 0, p.stderr);
-  assert.match(p.stdout, /^perfil: ram 2048 MB \(lowram\), /m);
+  assert.match(p.stdout, /^profile: ram 2048 MB \(lowram\), /m);
   assert.match(p.stdout, /emulator -avd fake-api35 -gpu host -memory 2048 .* -lowram -no-boot-anim/);
   assert.equal(JSON.parse(run(['android', 'plan', 'fake-api35', '--lowram', '--json']).stdout).profile.lowRam, true);
 
@@ -237,40 +237,40 @@ test('--lowram liga -lowram sem mexer na RAM; tune salva; plan herda; --no-lowra
   assert.match(readFileSync(configPath, 'utf8'), /^hw\.ramSize=2048$/m);
 
   const inherited = run(['android', 'plan', 'fake-api35']);
-  assert.match(inherited.stdout, /^perfil herdado do tune anterior$/m);
-  assert.match(inherited.stdout, / -lowram /, 'sem flag herda o lowram salvo');
+  assert.match(inherited.stdout, /^profile inherited from the previous tune$/m);
+  assert.match(inherited.stdout, / -lowram /, 'no flag inherits the saved lowram');
   const off = run(['android', 'plan', 'fake-api35', '--no-lowram']);
   assert.doesNotMatch(off.stdout, /^ {2}emulator .* -lowram /m);
   assert.match(off.stdout, /-memory 2048 /);
 
-  // --ram depois de --lowram mantem o lowram herdado
+  // --ram after --lowram keeps the inherited lowram
   assert.equal(run(['android', 'tune', 'fake-api35', '--ram', '3072']).code, 0);
   assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [3072, true]);
   assert.equal(run(['android', 'tune', 'fake-api35', '--no-lowram']).code, 0);
   assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [3072, false]);
 });
 
-test('--aggressive continua 1536 + lowram; --no-lowram junto tira so o lowram', () => {
+test('--aggressive stays 1536 + lowram; --no-lowram with it drops only the lowram', () => {
   assert.equal(run(['android', 'tune', 'fake-api35', '--aggressive']).code, 0);
   assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [1536, true]);
   assert.equal(run(['android', 'tune', 'fake-api35', '--aggressive', '--no-lowram']).code, 0);
   assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [1536, false]);
-  assert.equal(run(['android', 'tune', 'fake-api35', '--aggressive']).code, 0, '--aggressive religa o lowram sobre o salvo');
+  assert.equal(run(['android', 'tune', 'fake-api35', '--aggressive']).code, 0, '--aggressive turns lowram back on over the saved one');
   assert.deepEqual([lowramState().ramMb, lowramState().lowRam], [1536, true]);
 });
 
-test('--lowram com --no-lowram = erro de uso em plan, tune, up e bake; nada escrito', () => {
+test('--lowram with --no-lowram = usage error in plan, tune, up and bake; nothing written', () => {
   const before = tree(avdDir);
   for (const sub of ['plan', 'tune', 'up', 'bake']) {
     const r = run(['android', sub, 'fake-api35', '--lowram', '--no-lowram']);
     assert.equal(r.code, 2, `${sub}: ${r.stderr}`);
-    assert.equal(r.stderr.split('\n')[0], 'devslim: --lowram e --no-lowram nao combinam; use so um', sub);
+    assert.equal(r.stderr.split('\n')[0], 'devslim: --lowram and --no-lowram conflict; use only one', sub);
   }
   assert.deepEqual(tree(avdDir), before);
   assert.ok(!existsSync(join(devslimHome, 'state')));
 });
 
-test('cli up e bake aceitam --lowram/--no-lowram; bake --aggressive segue sendo so a lista de bloat', async () => {
+test('cli up and bake accept --lowram/--no-lowram; bake --aggressive is still just the bloat list', async () => {
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
   const a = inProcess();
   const up = await a.call(['android', 'up', 'fake-api35', '--lowram']);
@@ -281,28 +281,28 @@ test('cli up e bake aceitam --lowram/--no-lowram; bake --aggressive segue sendo 
   const b = inProcess();
   const bake = await b.call(['android', 'bake', 'fake-api35', '--aggressive', '--lowram', '--force']);
   assert.equal(bake.code, 0, bake.stderr);
-  assert.match(bake.stdout, /\(nivel aggressive\)/);
+  assert.match(bake.stdout, /\(level aggressive\)/);
   assert.match(bake.stdout, /-memory 2048 .*-lowram/);
 
   assert.equal(run(['android', 'tune', 'fake-api35', '--lowram']).code, 0);
   const c = inProcess();
   const plain = await c.call(['android', 'bake', 'fake-api35', '--no-lowram', '--force']);
   assert.equal(plain.code, 0, plain.stderr);
-  assert.ok(!c.fake.spawnCalls[0].args.includes('-lowram'), '--no-lowram sobrepoe o salvo');
+  assert.ok(!c.fake.spawnCalls[0].args.includes('-lowram'), '--no-lowram overrides the saved one');
   const d = inProcess();
   await d.call(['android', 'bake', 'fake-api35', '--aggressive', '--force']);
-  assert.ok(d.fake.spawnCalls[0].args.includes('-lowram'), 'sem flag herda o lowram salvo');
+  assert.ok(d.fake.spawnCalls[0].args.includes('-lowram'), 'no flag inherits the saved lowram');
 });
 
-// Nota do plan/tune: RAM abaixo de 2560 sem lowram deve ser elevada pelo emulador.
-const NOTE_RE = /^nota: /m;
+// plan/tune note: RAM below 2560 without lowram will likely be raised by the emulator.
+const NOTE_RE = /^note: /m;
 
-test('plan/tune: nota de piso so abaixo de 2560 MB sem lowram', () => {
+test('plan/tune: floor note only below 2560 MB without lowram', () => {
   const p = run(['android', 'plan', 'fake-api35']);
-  assert.match(p.stdout, /^nota: o emulador deve elevar a RAM pedida de 2048 MB \(pisos observados: 2560 MB em phone, 4096 MB em tablet 2560x1600\); --lowram faz o pedido valer/m);
-  assert.equal(p.stdout.match(/^nota: .*$/gm)?.length, 1, 'uma linha so');
+  assert.match(p.stdout, /^note: the emulator will likely raise the requested RAM of 2048 MB \(observed floors: 2560 MB on phone, 4096 MB on a 2560x1600 tablet\); --lowram makes the request stick/m);
+  assert.equal(p.stdout.match(/^note: .*$/gm)?.length, 1, 'a single line');
   assert.match(JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout).ramNote, /2048 MB/);
-  assert.match(run(['android', 'plan', 'fake-api35', '--aggressive', '--no-lowram']).stdout, /^nota: .*1536 MB/m);
+  assert.match(run(['android', 'plan', 'fake-api35', '--aggressive', '--no-lowram']).stdout, /^note: .*1536 MB/m);
 
   for (const flags of [['--lowram'], ['--aggressive'], ['--ram', '2560'], ['--ram', '4096']]) {
     const r = run(['android', 'plan', 'fake-api35', ...flags]);
@@ -314,51 +314,51 @@ test('plan/tune: nota de piso so abaixo de 2560 MB sem lowram', () => {
   assert.doesNotMatch(run(['android', 'tune', 'fake-api35', '--lowram']).stdout, NOTE_RE);
 });
 
-test('plan/tune: nota usa a RAM efetiva do ultimo boot (hardware-qemu.ini) quando ha', () => {
+test('plan/tune: note uses the effective RAM from the last boot (hardware-qemu.ini) when present', () => {
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
   writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 4096\nhw.gpu.mode = host\n');
   const p = run(['android', 'plan', 'fake-api35']);
-  assert.match(p.stdout, /^nota: no ultimo boot deste AVD o emulador elevou 2048 MB para 4096 MB; o pedido de 2048 MB deve subir de novo; --lowram faz o pedido valer/m);
-  assert.doesNotMatch(p.stdout, /pisos observados/);
+  assert.match(p.stdout, /^note: on this AVD's last boot the emulator raised 2048 MB to 4096 MB; the 2048 MB request will likely be raised again; --lowram makes the request stick/m);
+  assert.doesNotMatch(p.stdout, /observed floors/);
   const t = run(['android', 'tune', 'fake-api35', '--json']);
-  assert.match(JSON.parse(t.stdout).ramNote, /elevou 2048 MB para 4096 MB/);
+  assert.match(JSON.parse(t.stdout).ramNote, /raised 2048 MB to 4096 MB/);
 
-  // ultimo boot sem elevacao (efetiva = pedida): cai na nota generica
+  // last boot without a raise (effective = requested): falls back to the generic note
   writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 2048\n');
-  assert.match(run(['android', 'plan', 'fake-api35']).stdout, /^nota: .*pisos observados/m);
+  assert.match(run(['android', 'plan', 'fake-api35']).stdout, /^note: .*observed floors/m);
 });
 
-test('plan: nota compara a efetiva com o -memory do ultimo up (lastLaunch), nao com o perfil', () => {
-  assert.equal(run(['android', 'tune', 'fake-api35']).code, 0); // perfil 2048
+test('plan: note compares the effective RAM with the last up -memory (lastLaunch), not with the profile', () => {
+  assert.equal(run(['android', 'tune', 'fake-api35']).code, 0); // profile 2048
   const statePath = join(devslimHome, 'state', 'android', 'fake-api35.json');
   const st = JSON.parse(readFileSync(statePath, 'utf8'));
-  // up --ram 4096 sem tune: efetiva 4096 nao e elevacao; a nota volta a ser a generica.
+  // up --ram 4096 without tune: effective 4096 is not a raise; the note goes back to the generic one.
   writeFileSync(statePath, JSON.stringify({ ...st, lastLaunch: { ramMb: 4096, lowRam: false, at: '2026-11-17T09:00:00.000Z' } }));
   writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 4096\n');
   const p = run(['android', 'plan', 'fake-api35']);
-  assert.match(p.stdout, /^nota: o emulador deve elevar a RAM pedida de 2048 MB \(pisos observados/m);
-  assert.doesNotMatch(p.stdout, /no ultimo boot deste AVD/);
-  // ultimo up pediu 2048 e virou 2560: nota cita a elevacao real.
+  assert.match(p.stdout, /^note: the emulator will likely raise the requested RAM of 2048 MB \(observed floors/m);
+  assert.doesNotMatch(p.stdout, /on this AVD's last boot/);
+  // last up requested 2048 and got 2560: the note cites the real raise.
   writeFileSync(statePath, JSON.stringify({ ...st, lastLaunch: { ramMb: 2048, lowRam: false, at: '2026-11-17T09:00:00.000Z' } }));
   writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 2560\n');
-  assert.match(run(['android', 'plan', 'fake-api35']).stdout, /^nota: no ultimo boot deste AVD o emulador elevou 2048 MB para 2560 MB/m);
+  assert.match(run(['android', 'plan', 'fake-api35']).stdout, /^note: on this AVD's last boot the emulator raised 2048 MB to 2560 MB/m);
 });
 
-test('help lista --lowram e --no-lowram', () => {
+test('help lists --lowram and --no-lowram', () => {
   const h = run(['--help']).stdout;
   assert.match(h, /^ {2}--lowram {5,}/m);
   assert.match(h, /^ {2}--no-lowram {2,}/m);
   assert.match(h, /--aggressive +RAM 1536 \+ -lowram/);
 });
 
-test('help: --need lista keyboard; bake --aggressive cita o Gboard', () => {
+test('help: --need lists keyboard; bake --aggressive mentions Gboard', () => {
   const h = run(['--help']).stdout;
-  assert.match(h, /--need a,b +capacidades: audio, camera, keyboard, location, push, store, weblogin, window;/);
-  assert.match(h, /keyboard mantem o Gboard no bake --aggressive/);
-  assert.match(h, /--aggressive +bake: desliga tambem a lista aggressive \(Play Store, assistentes de setup, Gboard\)/);
+  assert.match(h, /--need a,b +capabilities: audio, camera, keyboard, location, push, store, weblogin, window;/);
+  assert.match(h, /keyboard keeps Gboard in bake --aggressive/);
+  assert.match(h, /--aggressive +bake: also disables the aggressive list \(Play Store, setup wizards, Gboard\)/);
 });
 
-test('cli bake --aggressive: Gboard desligado; --need keyboard mantem', async () => {
+test('cli bake --aggressive: Gboard disabled; --need keyboard keeps it', async () => {
   const GBOARD = 'com.google.android.inputmethod.latin';
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
   const a = inProcess({ spawned: { installed: [GBOARD, 'com.android.vending'] } });
@@ -368,41 +368,41 @@ test('cli bake --aggressive: Gboard desligado; --need keyboard mantem', async ()
   const b = inProcess({ spawned: { installed: [GBOARD, 'com.android.vending'] } });
   assert.equal((await b.call(['android', 'bake', 'fake-api35', '--aggressive', '--need', 'keyboard', '--force'])).code, 0);
   assert.deepEqual(st().disabledPackages, ['com.android.vending']);
-  assert.deepEqual(st().profile.capabilities, [], 'bake nao grava capacidades no perfil do tune');
+  assert.deepEqual(st().profile.capabilities, [], 'bake does not write capabilities into the tune profile');
 });
 
-test('help lista --grpc', () => {
+test('help lists --grpc', () => {
   const r = run(['--help']);
   assert.match(r.stdout, /^ {2}--grpc {7,}/m);
   assert.match(r.stdout, /\[--no-grpc\|--grpc\]|--grpc\]/);
 });
 
-test('erro de usuario: uma linha em stderr, sem stack, exit != 0', () => {
+test('user error: one line on stderr, no stack, exit != 0', () => {
   for (const args of [
     ['android', 'plan', 'fake-api35', '--ram', '1024'],
-    ['android', 'plan', 'nao-existe'],
+    ['android', 'plan', 'does-not-exist'],
     ['android', 'plan', 'fake-api35', '--need', 'bluetooth'],
     ['android', 'restore', 'fake-api35'],
   ]) {
     const r = run(args);
     assert.notEqual(r.code, 0, args.join(' '));
-    assert.equal(r.stderr.trimEnd().split('\n').length, 1, `uma linha: ${r.stderr}`);
+    assert.equal(r.stderr.trimEnd().split('\n').length, 1, `one line: ${r.stderr}`);
     assert.match(r.stderr, /^devslim: /);
     assert.doesNotMatch(r.stderr, /\n\s+at /);
   }
 });
 
-test('tune altera config.ini, salva state e remove hardware-qemu.ini e snapshots/', () => {
+test('tune changes config.ini, saves state and removes hardware-qemu.ini and snapshots/', () => {
   const r = run(['android', 'tune', 'fake-api35']);
   assert.equal(r.code, 0, r.stderr);
   const after = readFileSync(configPath, 'utf8');
   assert.match(after, /^hw\.ramSize=2048$/m);
   assert.match(after, /^hw\.gpu\.mode=host$/m);
-  assert.match(after, /^custom\.vendor\.flag=abc=def$/m, 'chave desconhecida intacta');
+  assert.match(after, /^custom\.vendor\.flag=abc=def$/m, 'unknown key intact');
   assert.ok(!existsSync(join(avdDir, 'hardware-qemu.ini')));
   assert.ok(!existsSync(join(avdDir, 'snapshots')));
-  assert.ok(existsSync(join(avdDir, 'multiinstance.lock')), 'nao mexe no que nao e dele');
-  assert.match(r.stdout, /removido: hardware-qemu\.ini, snapshots/);
+  assert.ok(existsSync(join(avdDir, 'multiinstance.lock')), 'does not touch what is not its own');
+  assert.match(r.stdout, /removed: hardware-qemu\.ini, snapshots/);
 
   const state = JSON.parse(readFileSync(join(devslimHome, 'state', 'android', 'fake-api35.json'), 'utf8'));
   assert.equal(state.originalConfigIni, PHONE.toString('utf8'));
@@ -411,36 +411,36 @@ test('tune altera config.ini, salva state e remove hardware-qemu.ini e snapshots
   assert.deepEqual(state.disabledPackages, []);
 });
 
-test('re-tune: mesmo perfil nao escreve nem remove; perfil novo mantem o primeiro backup', () => {
+test('re-tune: same profile neither writes nor removes; a new profile keeps the first backup', () => {
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
   mkdirSync(join(avdDir, 'snapshots', 'slim_base'), { recursive: true });
   const tuned = readFileSync(configPath);
 
   const same = run(['android', 'tune', 'fake-api35']);
   assert.equal(same.code, 0, same.stderr);
-  assert.match(same.stdout, /nada escrito/);
+  assert.match(same.stdout, /nothing written/);
   assert.ok(readFileSync(configPath).equals(tuned));
-  assert.ok(existsSync(join(avdDir, 'snapshots', 'slim_base')), 'sem mudanca, snapshot fica');
+  assert.ok(existsSync(join(avdDir, 'snapshots', 'slim_base')), 'no change, snapshot stays');
 
   const agg = run(['android', 'tune', 'fake-api35', '--aggressive']);
   assert.equal(agg.code, 0, agg.stderr);
-  assert.match(agg.stdout, /backup do primeiro tune mantido/);
+  assert.match(agg.stdout, /first tune backup kept/);
   assert.match(readFileSync(configPath, 'utf8'), /^hw\.ramSize=1536$/m);
   const state = JSON.parse(readFileSync(join(devslimHome, 'state', 'android', 'fake-api35.json'), 'utf8'));
-  assert.equal(state.originalConfigSha256, sha(PHONE), 'original continua o de antes do primeiro tune');
+  assert.equal(state.originalConfigSha256, sha(PHONE), 'original stays the one from before the first tune');
 });
 
-test('tune/plan herdam o perfil salvo: flags sobrepoem, --need substitui, none limpa, --reset volta ao padrao', () => {
+test('tune/plan inherit the saved profile: flags override, --need replaces, none clears, --reset goes back to defaults', () => {
   const statePath = join(devslimHome, 'state', 'android', 'fake-api35.json');
   const st = () => JSON.parse(readFileSync(statePath, 'utf8'));
   const cfg = () => readFileSync(configPath, 'utf8');
   assert.equal(run(['android', 'tune', 'fake-api35', '--need', 'location', '--ram', '3072']).code, 0);
   assert.match(cfg(), /^hw\.gps=yes$/m);
 
-  // plan sem state nao herda; com state mostra a linha e parte do perfil salvo.
+  // plan without state does not inherit; with state it shows the line and starts from the saved profile.
   const p = run(['android', 'plan', 'fake-api35', '--screen', '720x1600@320']);
   assert.equal(p.code, 0, p.stderr);
-  assert.match(p.stdout, /^perfil herdado do tune anterior$/m);
+  assert.match(p.stdout, /^profile inherited from the previous tune$/m);
   assert.match(p.stdout, /emulator -avd fake-api35 -gpu host -memory 3072 /);
   const pj = JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout);
   assert.equal(pj.inheritedProfile, true);
@@ -448,7 +448,7 @@ test('tune/plan herdam o perfil salvo: flags sobrepoem, --need substitui, none l
   const t = run(['android', 'tune', 'fake-api35', '--screen', '720x1600@320', '--json']);
   assert.equal(t.code, 0, t.stderr);
   const tj = JSON.parse(t.stdout);
-  assert.deepEqual(tj.changes.map((c: { key: string }) => c.key), ['hw.lcd.width', 'hw.lcd.height', 'hw.lcd.density'], 'muda so hw.lcd.*');
+  assert.deepEqual(tj.changes.map((c: { key: string }) => c.key), ['hw.lcd.width', 'hw.lcd.height', 'hw.lcd.density'], 'changes only hw.lcd.*');
   assert.equal(tj.inheritedProfile, true);
   assert.match(cfg(), /^hw\.ramSize=3072$/m);
   assert.match(cfg(), /^hw\.gps=yes$/m);
@@ -456,50 +456,50 @@ test('tune/plan herdam o perfil salvo: flags sobrepoem, --need substitui, none l
   assert.deepEqual(st().profile.capabilities, ['location']);
   assert.deepEqual(st().profile.screen, { width: 720, height: 1600, density: 320 });
 
-  // --need substitui (nao une)
+  // --need replaces (no merge)
   assert.equal(run(['android', 'tune', 'fake-api35', '--need', 'camera']).code, 0);
   assert.deepEqual(st().profile.capabilities, ['camera']);
   assert.match(cfg(), /^hw\.gps=no$/m);
   assert.match(cfg(), /^hw\.camera\.back=emulated$/m);
-  assert.equal(st().profile.ramMb, 3072, 'RAM continua a herdada');
+  assert.equal(st().profile.ramMb, 3072, 'RAM stays the inherited one');
 
-  // --need none limpa; combinado com outra capacidade e erro de uso
+  // --need none clears; combined with another capability it is a usage error
   assert.equal(run(['android', 'tune', 'fake-api35', '--need', 'none']).code, 0);
   assert.deepEqual(st().profile.capabilities, []);
   assert.match(cfg(), /^hw\.camera\.back=none$/m);
   const bad = run(['android', 'plan', 'fake-api35', '--need', 'none,camera']);
   assert.equal(bad.code, 2);
-  assert.match(bad.stderr, /^devslim: --need none nao combina com outras capacidades$/m);
+  assert.match(bad.stderr, /^devslim: --need none cannot be combined with other capabilities$/m);
 
-  // --reset: padrao, sem a linha de heranca
+  // --reset: defaults, without the inheritance line
   const rp = run(['android', 'plan', 'fake-api35', '--reset']);
-  assert.doesNotMatch(rp.stdout, /perfil herdado/);
+  assert.doesNotMatch(rp.stdout, /profile inherited/);
   assert.match(rp.stdout, /hw\.ramSize: 3072 -> 2048/);
   assert.equal(run(['android', 'tune', 'fake-api35', '--reset']).code, 0);
   assert.equal(st().profile.ramMb, 2048);
   assert.equal(st().profile.screen, 'keep');
   assert.deepEqual(st().profile.capabilities, []);
 
-  // backup original continua o de antes do primeiro tune
+  // original backup stays the one from before the first tune
   assert.equal(st().originalConfigSha256, sha(PHONE));
   assert.equal(st().originalConfigIni, PHONE.toString('utf8'));
 });
 
-test('up e bake nao aceitam --reset; help documenta heranca, --need none e --reset', () => {
+test('up and bake do not accept --reset; help documents inheritance, --need none and --reset', () => {
   assert.equal(run(['android', 'up', 'fake-api35', '--reset']).code, 2);
   const h = run(['--help']).stdout;
-  assert.match(h, /--need a,b +capacidades: [^\n]*\n +substitui as do tune; --need none limpa/);
-  assert.match(h, /--reset +plan\/tune: ignora o perfil salvo e parte do padrao/);
-  assert.match(h, /flags de plan\/tune\/up \(herdam o perfil do tune; flags sobrepoem\)/);
+  assert.match(h, /--need a,b +capabilities: [^\n]*\n +replaces the tune ones; --need none clears them/);
+  assert.match(h, /--reset +plan\/tune: ignores the saved profile and starts from the defaults/);
+  assert.match(h, /plan\/tune\/up flags \(inherit the tune profile; flags override it\)/);
 });
 
-test('plan sem state: sem linha de heranca', () => {
+test('plan without state: no inheritance line', () => {
   const p = run(['android', 'plan', 'fake-api35']);
-  assert.doesNotMatch(p.stdout, /perfil herdado/);
+  assert.doesNotMatch(p.stdout, /profile inherited/);
   assert.equal(JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout).inheritedProfile, false);
 });
 
-test('restore devolve bytes identicos (hash) e limpa o state', () => {
+test('restore returns identical bytes (hash) and clears the state', () => {
   const original = sha(readFileSync(configPath));
   assert.equal(run(['android', 'tune', 'fake-api35', '--screen', '720x1600@320']).code, 0);
   assert.equal(run(['android', 'tune', 'fake-api35', '--aggressive', '--need', 'audio']).code, 0);
@@ -512,10 +512,10 @@ test('restore devolve bytes identicos (hash) e limpa o state', () => {
 
   const again = run(['android', 'restore', 'fake-api35']);
   assert.notEqual(again.code, 0);
-  assert.match(again.stderr, /sem state/);
+  assert.match(again.stderr, /no tune state/);
 });
 
-test('restore preserva tablet sem newline final byte a byte', () => {
+test('restore keeps tablet without trailing newline byte for byte', () => {
   const tablet = readFileSync(new URL('./fixtures/tablet.config.ini', import.meta.url));
   writeFileSync(configPath, tablet);
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
@@ -523,22 +523,22 @@ test('restore preserva tablet sem newline final byte a byte', () => {
   assert.ok(readFileSync(configPath).equals(tablet));
 });
 
-test('tune recusa com lock presente e nao toca em nada', () => {
+test('tune refuses with a lock present and touches nothing', () => {
   mkdirSync(join(avdDir, 'hardware-qemu.ini.lock'));
   writeFileSync(join(avdDir, 'hardware-qemu.ini.lock', 'pid'), '4242');
   const before = tree(root);
   const r = run(['android', 'tune', 'fake-api35']);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /parece estar rodando .*hardware-qemu\.ini\.lock/);
+  assert.match(r.stderr, /seems to be running .*hardware-qemu\.ini\.lock/);
   assert.equal(r.stderr.trimEnd().split('\n').length, 1);
   assert.deepEqual(tree(root), before);
 
   const plan = run(['android', 'plan', 'fake-api35']);
   assert.equal(plan.code, 0);
-  assert.match(plan.stdout, /aviso: AVD parece estar rodando/);
+  assert.match(plan.stdout, /warning: AVD seems to be running/);
 });
 
-test('restore recusa com lock presente e mantem o state', () => {
+test('restore refuses with a lock present and keeps the state', () => {
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
   mkdirSync(join(avdDir, 'userdata-qemu.img.lock'));
   const r = run(['android', 'restore', 'fake-api35']);
@@ -547,7 +547,7 @@ test('restore recusa com lock presente e mantem o state', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Runtime ponta a ponta: main() no processo, com exec/spawn/sleep falsos.
+// Runtime end to end: main() in-process, with fake exec/spawn/sleep.
 
 function inProcess(opts: FakeAndroidOptions = {}) {
   const fake = createFakeAndroid({ avdHome, avdDir: (name) => join(avdHome, `${name}.avd`), ...opts });
@@ -583,15 +583,15 @@ const GUEST = {
   dumpsys: ' Free RAM: 1,061,523K (x)\n Used RAM:   871,869K (y)\n',
 };
 
-test('cli up: herda o perfil do tune, sobe, imprime serial; --json; segundo up = ja rodando', async () => {
+test('cli up: inherits the tune profile, starts, prints serial; --json; second up = already running', async () => {
   assert.equal(run(['android', 'tune', 'fake-api35', '--ram', '3072']).code, 0);
   const { fake, call } = inProcess();
   const r = await call(['android', 'up', 'fake-api35']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /AVD fake-api35 pronto em emulator-5554 \(pid \d+, cold boot sem snapshot/);
+  assert.match(r.stdout, /AVD fake-api35 ready on emulator-5554 \(pid \d+, cold boot without snapshot/);
   assert.match(r.stdout, /emulator -avd fake-api35 -gpu host -memory 3072 -cores 2 -port 5554 .*-no-snapshot$/m);
-  assert.match(r.stdout, /^dica: subiu sem snapshot slim_base; rode uma vez devslim android bake fake-api35 /m);
-  assert.equal(r.stdout.trimEnd().split('\n').at(-1)!.startsWith('dica: '), true, 'dica e a ultima linha');
+  assert.match(r.stdout, /^tip: started without the slim_base snapshot; run devslim android bake fake-api35 once /m);
+  assert.equal(r.stdout.trimEnd().split('\n').at(-1)!.startsWith('tip: '), true, 'tip is the last line');
   assert.equal(fake.spawnCalls.length, 1);
 
   const again = await call(['android', 'up', 'fake-api35', '--json']);
@@ -599,25 +599,25 @@ test('cli up: herda o perfil do tune, sobe, imprime serial; --json; segundo up =
   const j = JSON.parse(again.stdout);
   assert.equal(j.alreadyRunning, true);
   assert.equal(j.serial, 'emulator-5554');
-  assert.ok(!('hint' in j), 'ja rodando: sem hint');
+  assert.ok(!('hint' in j), 'already running: no hint');
   assert.ok('ramEffectiveMb' in j);
-  assert.equal(j.launcher, 'devslim', 'sessao registra o AVD');
+  assert.equal(j.launcher, 'devslim', 'session records the AVD');
   assert.ok('gpuEffective' in j);
-  assert.equal(again.stderr, '', 'nosso e sem GPU por software: sem aviso');
-  assert.equal(fake.spawnCalls.length, 1, 'nao sobe segundo');
+  assert.equal(again.stderr, '', 'ours and no software GPU: no warning');
+  assert.equal(fake.spawnCalls.length, 1, 'does not start a second one');
 });
 
-test('cli up: emulador sem anuncio = aviso em stderr e exit 0; anunciado = sem aviso e advertised no JSON; --no-grpc nao avisa', async () => {
+test('cli up: emulator without advertisement = warning on stderr and exit 0; advertised = no warning and advertised in the JSON; --no-grpc does not warn', async () => {
   const runningDir = join(root, 'Library', 'Caches', 'TemporaryItems', 'avd', 'running'); // HOME=root no env
   const quiet = inProcess();
   const r = await quiet.call(['android', 'up', 'fake-api35']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stderr, new RegExp(`^devslim: aviso: emulador nao se anunciou em ${runningDir.replace(/[.]/g, '\\.')}: .*adb funciona normalmente$`, 'm'));
+  assert.match(r.stderr, new RegExp(`^devslim: warning: emulator did not advertise itself in ${runningDir.replace(/[.]/g, '\\.')}: .*adb works normally$`, 'm'));
 
   const off = inProcess();
   const n = await off.call(['android', 'up', 'fake-api35', '--no-grpc', '--force']);
   assert.equal(n.code, 0, n.stderr);
-  assert.doesNotMatch(n.stderr, /nao se anunciou/);
+  assert.doesNotMatch(n.stderr, /did not advertise itself/);
   assert.doesNotMatch(n.stdout, /-grpc/);
 
   mkdirSync(runningDir, { recursive: true });
@@ -625,13 +625,13 @@ test('cli up: emulador sem anuncio = aviso em stderr e exit 0; anunciado = sem a
   const loud = inProcess();
   const j = await loud.call(['android', 'up', 'fake-api35', '--json']);
   assert.equal(j.code, 0, j.stderr);
-  assert.doesNotMatch(j.stderr, /nao se anunciou/);
+  assert.doesNotMatch(j.stderr, /did not advertise itself/);
   const out = JSON.parse(j.stdout);
   assert.deepEqual([out.advertised, out.grpcPort], [true, 8554]);
-  assert.ok(!(j.stdout + j.stderr).includes('abc123'), 'token nunca sai');
+  assert.ok(!(j.stdout + j.stderr).includes('abc123'), 'token never leaks');
 });
 
-test('cli bake --no-grpc: linha sem -grpc; bake padrao leva -grpc 8554 -grpc-use-token', async () => {
+test('cli bake --no-grpc: line without -grpc; default bake carries -grpc 8554 -grpc-use-token', async () => {
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
   const a = inProcess();
   const off = await a.call(['android', 'bake', 'fake-api35', '--no-grpc']);
@@ -640,34 +640,34 @@ test('cli bake --no-grpc: linha sem -grpc; bake padrao leva -grpc 8554 -grpc-use
   const b = inProcess();
   const on = await b.call(['android', 'bake', 'fake-api35', '--force']);
   assert.equal(on.code, 0, on.stderr);
-  assert.match(on.stdout, /^comando: emulator .*-port 5554 -grpc 8554 -grpc-use-token /m);
+  assert.match(on.stdout, /^command: emulator .*-port 5554 -grpc 8554 -grpc-use-token /m);
 });
 
-test('cli up: guarda recusa em uma linha, exit 1; --force passa', async () => {
-  const { call } = inProcess({ emulators: [{ avd: 'outro', port: 5554 }] });
+test('cli up: guard refuses in one line, exit 1; --force passes', async () => {
+  const { call } = inProcess({ emulators: [{ avd: 'other', port: 5554 }] });
   const r = await call(['android', 'up', 'fake-api35']);
   assert.equal(r.code, 1);
   assert.equal(r.stderr.trimEnd().split('\n').length, 1);
-  assert.match(r.stderr, /^devslim: up recusado: ja ha device rodando: emulador emulator-5554/);
+  assert.match(r.stderr, /^devslim: up refused: a device is already running: emulator emulator-5554/);
   const f = await call(['android', 'up', 'fake-api35', '--force', '--port', '5560']);
   assert.equal(f.code, 0, f.stderr);
-  assert.match(f.stdout, /pronto em emulator-5560/);
+  assert.match(f.stdout, /ready on emulator-5560/);
 });
 
-test('cli bake: sem tune da erro; com tune enxuga, grava slim_base e desliga; up seguinte usa o snapshot', async () => {
+test('cli bake: without tune errors; with tune slims, saves slim_base and shuts down; the next up uses the snapshot', async () => {
   const { fake, call } = inProcess({ spawned: { installed: ['com.google.android.youtube', 'com.android.vending', 'com.android.chrome'] } });
   const noTune = await call(['android', 'bake', 'fake-api35']);
   assert.equal(noTune.code, 1);
-  assert.match(noTune.stderr, /rode antes: devslim android tune fake-api35/);
+  assert.match(noTune.stderr, /run first: devslim android tune fake-api35/);
 
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
   const r = await call(['android', 'bake', 'fake-api35', '--aggressive']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /bake de fake-api35 em emulator-5554 \(nivel aggressive\)/);
-  assert.match(r.stdout, /-memory 2048 /, '--aggressive no bake nao mexe na RAM do tune');
-  assert.match(r.stdout, /pacotes: 2 desligado\(s\) agora/);
-  assert.match(r.stdout, /snapshot slim_base gravado; emulador desligado/);
-  assert.match(r.stdout, /tempos: boot .* total /);
+  assert.match(r.stdout, /bake of fake-api35 on emulator-5554 \(level aggressive\)/);
+  assert.match(r.stdout, /-memory 2048 /, '--aggressive in bake does not touch the tune RAM');
+  assert.match(r.stdout, /packages: 2 disabled now/);
+  assert.match(r.stdout, /snapshot slim_base saved; emulator shut down/);
+  assert.match(r.stdout, /timings: boot .* total /);
   assert.equal(fake.emulators.size, 0);
   const state = JSON.parse(readFileSync(join(devslimHome, 'state', 'android', 'fake-api35.json'), 'utf8'));
   assert.deepEqual(state.disabledPackages, ['com.google.android.youtube', 'com.android.vending']);
@@ -677,35 +677,35 @@ test('cli bake: sem tune da erro; com tune enxuga, grava slim_base e desliga; up
   assert.equal(up.code, 0, up.stderr);
   assert.match(up.stdout, /snapshot slim_base/);
   assert.match(up.stdout, /-snapshot slim_base -no-snapshot-save$/m);
-  assert.doesNotMatch(up.stdout, /dica:|bake/, 'partiu do snapshot: sem dica');
+  assert.doesNotMatch(up.stdout, /tip:|bake/, 'started from the snapshot: no tip');
 });
 
-test('cli up --json sem slim_base traz hint e ramEffectiveMb', async () => {
+test('cli up --json without slim_base carries hint and ramEffectiveMb', async () => {
   const { call } = inProcess();
   const r = await call(['android', 'up', 'fake-api35', '--json']);
   assert.equal(r.code, 0, r.stderr);
   const j = JSON.parse(r.stdout);
   assert.equal(j.fromSnapshot, false);
-  assert.match(j.hint, /^dica: .*devslim android bake fake-api35/);
-  assert.equal(j.ramEffectiveMb, null, 'fake nao escreve hardware-qemu.ini nem log');
+  assert.match(j.hint, /^tip: .*devslim android bake fake-api35/);
+  assert.equal(j.ramEffectiveMb, null, 'fake writes neither hardware-qemu.ini nor log');
 });
 
-test('cli down: so o registrado; --json', async () => {
-  const { fake, call } = inProcess({ emulators: [{ avd: 'do-dono', port: 5556 }] });
+test('cli down: only the recorded one; --json', async () => {
+  const { fake, call } = inProcess({ emulators: [{ avd: 'owners', port: 5556 }] });
   assert.equal((await call(['android', 'up', 'fake-api35', '--force'])).code, 0);
   assert.equal(fake.emulators.size, 2);
   const r = await call(['android', 'down', '--json']);
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(JSON.parse(r.stdout).map((x: { avd: string; result: string }) => [x.avd, x.result]), [['fake-api35', 'killed']]);
-  assert.deepEqual([...fake.emulators.values()].map((e) => e.avd), ['do-dono']);
+  assert.deepEqual([...fake.emulators.values()].map((e) => e.avd), ['owners']);
   const empty = await call(['android', 'down']);
-  assert.equal(empty.stdout, 'nada a desligar (sessao vazia)\n');
-  const refused = await call(['android', 'down', 'do-dono']);
+  assert.equal(empty.stdout, 'nothing to shut down (empty session)\n');
+  const refused = await call(['android', 'down', 'owners']);
   assert.equal(refused.code, 1);
   assert.match(refused.stderr, /--force/);
 });
 
-test('cli measure --json: objeto estavel', async () => {
+test('cli measure --json: stable object', async () => {
   const { call } = inProcess({
     emulators: [{ avd: 'fake-api35', port: 5554 }],
     host: { pgrep: '51234\n', footprint: '    phys_footprint: 2.6 GB\n', rss: '2754560\n' },
@@ -727,10 +727,10 @@ test('cli measure --json: objeto estavel', async () => {
     at: '2026-11-16T12:00:00.000Z',
   });
   const text = await call(['android', 'measure', 'fake-api35']);
-  assert.match(text.stdout, /host: phys_footprint 2662\.4 MB, footprint \(cabecalho\) n\/d, rss 2690 MB/);
+  assert.match(text.stdout, /host: phys_footprint 2662\.4 MB, footprint \(header\) n\/a, rss 2690 MB/);
 });
 
-test('cli measure texto com a saida real do footprint: os tres valores', async () => {
+test('cli measure text with the real footprint output: all three values', async () => {
   const { call } = inProcess({
     emulators: [{ avd: 'fake-api35', port: 5554 }],
     host: {
@@ -742,10 +742,10 @@ test('cli measure texto com a saida real do footprint: os tres valores', async (
   });
   const text = await call(['android', 'measure', 'fake-api35']);
   assert.equal(text.code, 0, text.stderr);
-  assert.match(text.stdout, /^host: phys_footprint 5582 MB, footprint \(cabecalho\) 3000 MB, rss 4040\.9 MB$/m);
+  assert.match(text.stdout, /^host: phys_footprint 5582 MB, footprint \(header\) 3000 MB, rss 4040\.9 MB$/m);
 });
 
-test('cli restore: pendencia com AVD desligado = uma linha de erro; --config-only avisa e mantem state', async () => {
+test('cli restore: pending changes with AVD shut down = one error line; --config-only warns and keeps state', async () => {
   assert.equal(run(['android', 'tune', 'fake-api35']).code, 0);
   const statePath = join(devslimHome, 'state', 'android', 'fake-api35.json');
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
@@ -758,25 +758,25 @@ test('cli restore: pendencia com AVD desligado = uma linha de erro; --config-onl
   assert.match(r.stderr, /--config-only/);
   const c = await call(['android', 'restore', 'fake-api35', '--config-only']);
   assert.equal(c.code, 0, c.stderr);
-  assert.match(c.stderr, /aviso: --config-only/);
-  assert.match(c.stdout, /state mantido/);
+  assert.match(c.stderr, /warning: --config-only/);
+  assert.match(c.stdout, /state kept/);
   assert.ok(readFileSync(configPath).equals(PHONE));
   assert.ok(existsSync(statePath));
 });
 
-test('cli create: recusa existente; cria com tela 720x1600@320', async () => {
+test('cli create: refuses an existing one; creates with a 720x1600@320 screen', async () => {
   const { fake, call } = inProcess();
   const dup = await call(['android', 'create', 'fake-api35']);
   assert.equal(dup.code, 1);
-  assert.match(dup.stderr, /ja existe/);
-  const r = await call(['android', 'create', 'novo-api35', '--device', 'pixel_6']);
+  assert.match(dup.stderr, /already exists/);
+  const r = await call(['android', 'create', 'new-api35', '--device', 'pixel_6']);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /AVD novo-api35 criado \(system-images;android-35;google_apis;arm64-v8a, pixel_6\); nao bootado/);
-  assert.match(readFileSync(join(avdHome, 'novo-api35.avd', 'config.ini'), 'utf8'), /^hw\.lcd\.width=720$/m);
+  assert.match(r.stdout, /AVD new-api35 created \(system-images;android-35;google_apis;arm64-v8a, pixel_6\); not booted/);
+  assert.match(readFileSync(join(avdHome, 'new-api35.avd', 'config.ini'), 'utf8'), /^hw\.lcd\.width=720$/m);
   assert.equal(fake.exec.calls[0].opts.input, 'no\n');
 });
 
-test('cli create --image atalho e --api; imagem ausente = sdkmanager na mensagem; --api com id completo = uso', async () => {
+test('cli create --image shortcut and --api; missing image = sdkmanager in the message; --api with a full id = usage', async () => {
   const { call } = inProcess({ systemImages: ['system-images;android-34;aosp_atd;arm64-v8a'] });
   const r = await call(['android', 'create', 'atd-api34', '--image', 'aosp_atd', '--api', '34', '--json']);
   assert.equal(r.code, 0, r.stderr);
@@ -789,23 +789,23 @@ test('cli create --image atalho e --api; imagem ausente = sdkmanager na mensagem
 
   const bad = await call(['android', 'create', 'x', '--image', 'system-images;android-34;aosp_atd;arm64-v8a', '--api', '34']);
   assert.equal(bad.code, 2);
-  assert.match(bad.stderr, /^devslim: --api so vale com atalho de imagem/m);
+  assert.match(bad.stderr, /^devslim: --api only applies to an image shortcut/m);
   assert.equal((await call(['android', 'create', 'x', '--image', 'aosp_atd', '--api', 'abc'])).code, 2);
   const unknown = await call(['android', 'create', 'x', '--image', 'playstore']);
   assert.equal(unknown.code, 1);
-  assert.match(unknown.stderr, /imagem desconhecida: playstore/);
+  assert.match(unknown.stderr, /unknown image: playstore/);
 });
 
-test('help: create lista --api, os atalhos de imagem e o trade-off dos ATD', () => {
+test('help: create lists --api, the image shortcuts and the ATD trade-off', () => {
   const h = run(['--help']).stdout;
-  assert.match(h, /devslim android create <nome> \[--image I\] \[--api N\] \[--device D\]/);
+  assert.match(h, /devslim android create <name> \[--image I\] \[--api N\] \[--device D\]/);
   assert.match(h, /^ {2}--api N {6,}/m);
   assert.match(h, /google_apis, google_atd, aosp_atd, default/);
-  assert.match(h, /aosp_atd: sem login Google, push FCM nem compra Play Billing/);
+  assert.match(h, /aosp_atd: no Google sign-in, FCM push or Play Billing purchases/);
 });
 
 // ---------------------------------------------------------------------------
-// iOS ponta a ponta: main() no processo com simulador e store falsos (tmpdir).
+// iOS end to end: main() in-process with fake simulator and store (tmpdir).
 
 const SIM = 'DBF8B093-58A2-4B57-812A-60D6CF8594BD';
 
@@ -829,35 +829,35 @@ function iosInProcess(opts: Partial<FakeIosOptions> = {}) {
   return { fake, call, storeBase };
 }
 
-test('cli ios: --help lista os subcomandos; erros de uso exit 2', async () => {
+test('cli ios: --help lists the subcommands; usage errors exit 2', async () => {
   const h = run(['--help']);
-  for (const c of ['plan <udid\\|nome>', 'up <udid\\|nome>', 'off <udid\\|nome>', 'down \\[<udid\\|nome>\\]', 'measure <udid\\|nome>', 'categories']) {
+  for (const c of ['plan <udid\\|name>', 'up <udid\\|name>', 'off <udid\\|name>', 'down \\[<udid\\|name>\\]', 'measure <udid\\|name>', 'categories']) {
     assert.match(h.stdout, new RegExp(`devslim ios ${c}`), c);
   }
-  assert.match(h.stdout, /quebra push, StoreKit, universal links e login Apple ID/);
+  assert.match(h.stdout, /breaks push, StoreKit, universal links and Apple ID sign-in/);
   const { call } = iosInProcess();
   assert.equal((await call(['ios'])).code, 2);
   assert.equal((await call(['ios', 'plan'])).code, 2);
   assert.equal((await call(['ios', 'up', 'x', '--bogus'])).code, 2);
   const alias = await call(['ios', 'plan', 'booted']);
   assert.equal(alias.code, 1);
-  assert.match(alias.stderr, /^devslim: "booted" e alias do simctl/);
+  assert.match(alias.stderr, /^devslim: "booted" is a simctl alias/);
 });
 
-test('cli ios categories: texto e --json', async () => {
+test('cli ios categories: text and --json', async () => {
   const { call, fake } = iosInProcess();
   const t = await call(['ios', 'categories']);
   assert.equal(t.code, 0, t.stderr);
-  assert.match(t.stdout, /^siri\s+28 labels  quebra: Siri/m);
-  assert.match(t.stdout, /total gerido: 173 labels unicos/);
+  assert.match(t.stdout, /^siri\s+28 labels  breaks: Siri/m);
+  assert.match(t.stdout, /total managed: 173 unique labels/);
   const j = JSON.parse((await call(['ios', 'categories', '--json'])).stdout);
   assert.equal(j.managedTotal, 173);
   assert.equal(j.categories.length, 16);
   assert.deepEqual(j.capabilities.push, { categories: [], labels: ['com.apple.apsd'] });
-  assert.equal(fake.calls.length, 0, 'categories nao chama nada');
+  assert.equal(fake.calls.length, 0, 'categories calls nothing');
 });
 
-test('cli ios plan --json: so leitura, objeto com labels e runtime', async () => {
+test('cli ios plan --json: read-only, object with labels and runtime', async () => {
   const { call, fake, storeBase } = iosInProcess();
   const r = await call(['ios', 'plan', 'QA-iPhone17', '--need', 'push', '--except', 'widgets,siri', '--keep', 'com.apple.triald', '--json']);
   assert.equal(r.code, 0, r.stderr);
@@ -882,7 +882,7 @@ test('cli ios up, measure --json, off, down', async () => {
   });
   const up = await call(['ios', 'up', 'QA-iPhone17']);
   assert.equal(up.code, 0, up.stderr);
-  assert.match(up.stdout, /QA-iPhone17 \(DBF8B093-58A2-4B57-812A-60D6CF8594BD\) iOS 26\.4: 173 labels no perfil, 173 entrada\(s\) do store mudaram/);
+  assert.match(up.stdout, /QA-iPhone17 \(DBF8B093-58A2-4B57-812A-60D6CF8594BD\) iOS 26\.4: 173 labels in the profile, 173 store entry\(ies\) changed/);
   assert.match(up.stdout, /^state: .*state\/ios\/DBF8B093-58A2-4B57-812A-60D6CF8594BD\.json$/m);
 
   const m = await call(['ios', 'measure', SIM, '--json']);
@@ -896,11 +896,11 @@ test('cli ios up, measure --json, off, down', async () => {
 
   const off = await call(['ios', 'off', 'QA-iPhone17']);
   assert.equal(off.code, 0, off.stderr);
-  assert.match(off.stdout, /173 label\(s\) devolvido\(s\) ao valor salvo; state removido/);
-  assert.match(off.stdout, /simulador rebootado/);
+  assert.match(off.stdout, /173 label\(s\) returned to saved value; state removed/);
+  assert.match(off.stdout, /simulator rebooted/);
   const offAgain = await call(['ios', 'off', 'QA-iPhone17']);
   assert.equal(offAgain.code, 1);
-  assert.match(offAgain.stderr, /^devslim: sem state para QA-iPhone17/);
+  assert.match(offAgain.stderr, /^devslim: no state for QA-iPhone17/);
 
   const down = await call(['ios', 'down']);
   assert.equal(down.code, 0, down.stderr);
@@ -908,7 +908,7 @@ test('cli ios up, measure --json, off, down', async () => {
   assert.equal(fake.sims.get(SIM)!.state, 'Shutdown');
 });
 
-test('cli ios plan/up: reparo dos sempre ligados aparece no texto e no --json', async () => {
+test('cli ios plan/up: repair of always-enabled labels shows in the text and in --json', async () => {
   const { call, storeBase } = iosInProcess();
   const p = join(storeBase, `com.apple.CoreSimulator.SimDevice.${SIM}`, 'disabled.plist');
   mkdirSync(join(p, '..'), { recursive: true });
@@ -917,47 +917,47 @@ test('cli ios plan/up: reparo dos sempre ligados aparece no texto e no --json', 
   assert.equal(j.code, 0, j.stderr);
   assert.deepEqual(JSON.parse(j.stdout).repair, ['com.apple.assistantd', 'com.apple.gamed']);
   const t = await call(['ios', 'plan', 'QA-iPhone17']);
-  assert.match(t.stdout, /^reparo \(sempre ligados que o store traz desligados\): com\.apple\.assistantd,com\.apple\.gamed$/m);
+  assert.match(t.stdout, /^repair \(always-enabled labels the store has disabled\): com\.apple\.assistantd,com\.apple\.gamed$/m);
   const up = await call(['ios', 'up', 'QA-iPhone17']);
   assert.equal(up.code, 0, up.stderr);
-  assert.match(up.stdout, /^reparados \(sempre ligados que estavam desligados no store\): com\.apple\.assistantd, com\.apple\.gamed$/m);
+  assert.match(up.stdout, /^repaired \(always-enabled labels that were disabled in the store\): com\.apple\.assistantd, com\.apple\.gamed$/m);
 });
 
-test('--help lista os comandos de topo', () => {
+test('--help lists the top-level commands', () => {
   const h = run(['--help']);
   for (const c of ['status \\[--json\\]', 'doctor \\[--json\\]', 'down \\[--force\\] \\[--json\\]', 'measure \\[--json\\]']) {
     assert.match(h.stdout, new RegExp(`devslim ${c}`), c);
   }
 });
 
-test('cli ios up: label que nao pega = exit 3 com a lista', async () => {
+test('cli ios up: a label that does not stick = exit 3 with the list', async () => {
   const { call } = iosInProcess({ stubborn: ['com.apple.triald'] });
   const r = await call(['ios', 'up', SIM]);
   assert.equal(r.code, 3, r.stderr);
-  assert.match(r.stdout, /NAO desligados \(1\): com\.apple\.triald/);
-  assert.match(r.stdout, /launchctl em 1 passada\(s\) e reboot/);
+  assert.match(r.stdout, /NOT disabled \(1\): com\.apple\.triald/);
+  assert.match(r.stdout, /launchctl in 1 pass\(es\) and reboot/);
 });
 
-test('plan e tune informam o tamanho de snapshots/ na linha apagaria/removido; JSON com snapshotsMb', () => {
+test('plan and tune report the size of snapshots/ in the would-delete/removed line; JSON with snapshotsMb', () => {
   writeFileSync(join(avdDir, 'snapshots', 'default_boot', 'ram.bin'), Buffer.alloc(3 * 1024 * 1024 - 3));
   mkdirSync(join(avdDir, 'snapshots', 'slim_base'));
-  writeFileSync(join(avdDir, 'snapshots', 'slim_base', 'ram.bin'), Buffer.alloc(3)); // total exato: 3 MiB
+  writeFileSync(join(avdDir, 'snapshots', 'slim_base', 'ram.bin'), Buffer.alloc(3)); // exact total: 3 MiB
   const p = run(['android', 'plan', 'fake-api35']);
   assert.equal(p.code, 0, p.stderr);
-  assert.match(p.stdout, /^tune apagaria: hardware-qemu\.ini, snapshots \(3 MB\)$/m);
+  assert.match(p.stdout, /^tune would delete: hardware-qemu\.ini, snapshots \(3 MB\)$/m);
   const j = JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout);
   assert.deepEqual(j.wouldRemove, ['hardware-qemu.ini', 'snapshots']);
   assert.equal(j.snapshotsMb, 3);
 
   const t = run(['android', 'tune', 'fake-api35']);
   assert.equal(t.code, 0, t.stderr);
-  assert.match(t.stdout, /^removido: hardware-qemu\.ini, snapshots \(3 MB\)$/m);
+  assert.match(t.stdout, /^removed: hardware-qemu\.ini, snapshots \(3 MB\)$/m);
   assert.ok(!existsSync(join(avdDir, 'snapshots')));
 });
 
-test('plan sem snapshots/: linha apagaria sem tamanho e snapshotsMb null', () => {
+test('plan without snapshots/: would-delete line without size and snapshotsMb null', () => {
   rmSync(join(avdDir, 'snapshots'), { recursive: true });
   const p = run(['android', 'plan', 'fake-api35']);
-  assert.match(p.stdout, /^tune apagaria: hardware-qemu\.ini$/m);
+  assert.match(p.stdout, /^tune would delete: hardware-qemu\.ini$/m);
   assert.equal(JSON.parse(run(['android', 'plan', 'fake-api35', '--json']).stdout).snapshotsMb, null);
 });

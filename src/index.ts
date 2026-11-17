@@ -1,4 +1,4 @@
-// API publica da lib devslim. A CLI (src/cli.ts) e uma camada fina por cima.
+// Public API of the devslim lib. The CLI (src/cli.ts) is a thin layer on top.
 export { DevslimError, UsageError } from './errors.ts';
 export { writeFileAtomic } from './fsAtomic.ts';
 export { nodeExec, createFakeExec, nodeSpawnDetached, createFakeSpawnDetached, nodeSignalPid } from './exec.ts';
@@ -92,7 +92,7 @@ export type { AvdInfo } from './android/avd.ts';
 export { planTune, tuneAvd, restoreAvd } from './android/tune.ts';
 export type { TunePlan, TuneResult, RestoreResult, RestoreOptions, TuneContext } from './android/tune.ts';
 
-// Runtime Android (fala com adb/emulator/avdmanager via Exec injetavel).
+// Android runtime (talks to adb/emulator/avdmanager through an injectable Exec).
 export { findSdkTool, findSdkRoot, sdkToolPath, sdkCandidates, defaultFileExists, defaultDirExists, sdkRootOfTool } from './android/sdk.ts';
 export {
   IMAGE_SHORTCUTS,
@@ -187,7 +187,7 @@ export {
 } from './measure.ts';
 export type { AndroidMeasurement, HostMeasure, GuestMeasure, IosMeasurement, PsEntry } from './measure.ts';
 
-// iOS (simulador): labels launchd geridos, store disabled.plist, simctl, up/off.
+// iOS (simulator): managed launchd labels, disabled.plist store, simctl, up/off.
 export {
   CATEGORY_IDS,
   CATEGORIES,
@@ -253,7 +253,7 @@ export type {
 export { createFakeIos, FAKE_RUNTIME_ID, FAKE_SDK } from './ios/fakeIos.ts';
 export type { FakeIos, FakeIosOptions, FakeSim, FakeSimInit } from './ios/fakeIos.ts';
 
-// Comandos transversais: status, doctor, down e measure de topo.
+// Cross-platform commands: status, doctor, top-level down and measure.
 export { collectStatus, statusText, avdLiveness, sessionStatus, listSimDevices, readSwap } from './status.ts';
 export type { StatusReport, IosStatus, AndroidStatus, SessionStatus, SwapStatus, AvdLiveness } from './status.ts';
 export {
@@ -292,7 +292,7 @@ export { classifyLauncher, parseQemuProcesses, listQemuProcesses, processCommand
 export type { Launcher, QemuProcess } from './android/launcher.ts';
 export type { TopDownOutcome, PruneOutcome, AnyMeasurement } from './topLevel.ts';
 
-// Auto-desligar (`up --idle-down`): duracao, primeiro plano, laco e watcher.
+// Idle-down (`up --idle-down`): duration, foreground, loop and watcher.
 export {
   parseIdleDuration,
   formatDuration,

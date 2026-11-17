@@ -1,520 +1,538 @@
 # devslim
 
-devslim deixa o emulador Android e o simulador iOS mais leves num Mac Apple
-Silicon. No Android ele reescreve o `config.ini` do AVD, lanca o emulador com
-flags economicas e desliga pacotes de bloat no guest, gravando um snapshot ja
-enxuto. No iOS ele marca labels launchd `com.apple.*` como desligados no store
-de overrides de cada simulador antes de bootar. Toda mudanca guarda o estado
-anterior e tem comando para desfazer.
+devslim makes the Android emulator and the iOS simulator lighter on an Apple
+Silicon Mac. On Android it rewrites the AVD `config.ini`, launches the emulator
+with lean flags and disables bloat packages in the guest, saving an already
+slimmed snapshot. On iOS it marks `com.apple.*` launchd labels as disabled in
+each simulator's override store before booting. Every change keeps the previous
+state and has a command to undo it.
 
-E uma lib TypeScript com uma CLI fina por cima. Roda direto no Node 25 com type
-stripping, sem build e sem nenhuma dependencia npm.
+It is a TypeScript library with a thin CLI on top. It runs directly on Node 25
+with type stripping, with no build step and no npm dependencies.
 
-## Sem devslim x com devslim
+## Without vs with devslim
 
-Mesmo Mac Apple Silicon, 2026-11-17, 2 min parado depois do boot, sem app
-aberto, uma medicao por linha. Detalhes e ressalvas em "Numeros medidos".
+Same Apple Silicon Mac, 2026-11-17, 2 min idle after boot, no app open, one
+measurement per row. Details and caveats in "Measured numbers".
 
-Android, API 35 arm64, pixel_7, memoria do processo qemu no host
+Android, API 35 arm64, pixel_7, memory of the qemu process on the host
 (`phys_footprint`):
 
-| como subiu | RAM do guest | memoria no host | processos no guest |
+| how it was started | guest RAM | host memory | guest processes |
 |---|---|---|---|
-| sem devslim (`google_apis`, headless) | 2560 MB | 5525 MB | 341 |
+| without devslim (`google_apis`, headless) | 2560 MB | 5525 MB | 341 |
 | `devslim android up` | 2560 MB | 4590 MB (-17%) | 325 |
 | `devslim android up --aggressive` | 1536 MB | 3444 MB (-38%) | 290 |
-| `--aggressive` em imagem `aosp_atd` | 1536 MB | 2502 MB (-55%) | 307 |
+| `--aggressive` on an `aosp_atd` image | 1536 MB | 2502 MB (-55%) | 307 |
 
-iOS, iPhone 17, iOS 26.4, soma da arvore de processos do simulador:
+iOS, iPhone 17, iOS 26.4, sum of the simulator process tree:
 
-| como subiu | processos | memoria |
+| how it was started | processes | memory |
 |---|---|---|
-| sem devslim (`xcrun simctl boot`) | 279 | 4629 MB |
+| without devslim (`xcrun simctl boot`) | 279 | 4629 MB |
 | `devslim ios up` | 67 | 953 MB (-79%) |
 
-## Instalacao
+## Installation
 
-Precisa de Node 25 ou mais novo. Nao ha `npm install` a rodar.
+Requires Node 25 or newer. There is no `npm install` to run.
 
 ```
 git clone https://github.com/HeiCg/devslim.git
 cd devslim
-npm link                     # poe `devslim` no PATH
-# ou, sem npm:
+npm link                     # puts `devslim` on the PATH
+# or, without npm:
 alias devslim="$PWD/bin/devslim"
 devslim doctor
 ```
 
-Para usar como lib em outro projeto, rode `npm link devslim` nesse projeto. O
-Node resolve o symlink para o caminho real, fora de `node_modules`, e por isso
-aceita os arquivos `.ts`.
+To use it as a library in another project, run `npm link devslim` in that
+project. Node resolves the symlink to the real path, outside `node_modules`, so
+it accepts the `.ts` files.
 
-## Comandos de topo
+## Top-level commands
 
 ```
-devslim status [--json]          o que esta bootado, perfil aplicado, drift, sessao e swap
-devslim doctor [--json]          checagens de ambiente; exit 1 se alguma der fail
-devslim down [--force] [--json]  desliga tudo que a sessao subiu, Android e iOS
-devslim prune [--json]           so limpa registros: tira da sessao entradas de device que ja nao roda
-devslim measure [--json]         mede todo emulador e simulador rodando
+devslim status [--json]          what is booted, applied profile, drift, session and swap
+devslim doctor [--json]          environment checks; exit 1 on any fail
+devslim down [--force] [--json]  shuts down everything the session started, Android and iOS
+devslim prune [--json]           only cleans records: drops session entries for devices no longer running
+devslim measure [--json]         measures every running emulator and simulator
 ```
 
-`down` desliga os devices vivos que a sessao registrou. `prune` nao desliga
-nada: so limpa registros mortos.
+`down` shuts down the live devices the session registered. `prune` shuts
+nothing down: it only cleans dead records.
 
-`status` e `doctor` so leem. Nenhum dos dois chama `adb`, porque isso subiria o
-daemon. Emulador rodando e detectado por diretorio `*.lock` dentro do `.avd` ou
-por `pgrep -f "qemu-system.*-avd <nome>( |$)"`. Quem lancou cada emulador sai
-da linha de comando do qemu (`pgrep -fl qemu-system`, ou `ps -o command= -p
-<pid>`): `devslim` quando a sessao do devslim registra o AVD ou a linha tem
-`-memory` e `-cores` sem `-netfast`; `argent` quando tem `-netfast` e
-`-crash-report-mode never`; `other` no resto. O devslim nao poe marca no guest.
+`status` and `doctor` only read. Neither calls `adb`, because that would start
+the daemon. A running emulator is detected by a `*.lock` directory inside the
+`.avd` or by `pgrep -f "qemu-system.*-avd <name>( |$)"`. Who launched each
+emulator comes from the qemu command line (`pgrep -fl qemu-system`, or `ps -o
+command= -p <pid>`): `devslim` when the devslim session registers the AVD or the
+line has `-memory` and `-cores` without `-netfast`; `argent` when it has
+`-netfast` and `-crash-report-mode never`; `other` otherwise. devslim puts no
+marker in the guest.
 
-`status --json` devolve sempre `{ios, android, session, swap, at}`.
+`status --json` always returns `{ios, android, session, swap, at}`.
 
-- `ios` lista os simuladores bootados e todo simulador com state do devslim. Para
-  esses ele conta quantos labels do perfil salvo estao desligados no store e
-  marca `drift: true` quando o store perdeu entradas, o que acontece depois de um
-  `simctl erase`. A correcao e rodar `devslim ios up` de novo.
-- `android` lista os AVDs com state, com RAM e gpu do tune, se ha snapshot
-  `slim_base` e se esta rodando (por lock, por pgrep, ou os dois). Quando o
-  `hardware-qemu.ini` do ultimo boot existe, traz tambem o que o emulador de
-  fato usou: `ramRequestedMb` (o `-memory` do ultimo `up` ou `bake`, gravado
-  como `lastLaunch` no state; state antigo sem o campo usa o do tune), `ramEffectiveMb`,
-  `ramFloored` (efetiva acima da pedida) e `gpuEffective`. `ramMb` e `gpu`
-  continuam com os valores pedidos. No texto: `ram pedida 2048 MB, efetiva
-  2560 MB (emulador elevou)`. Um `up --ram 4096` sem `tune` que rodou com 4096
-  MB nao aparece como elevado. AVD com state cujo diretorio sumiu sai como `AVD
-  nao encontrado (<dir>); state orfao: devslim android forget <avd>`; simulador
-  com state que nao existe mais no `simctl` sai com estado `missing` e o sufixo
-  `simulador nao existe mais; state orfao: devslim ios forget <udid>`. Lista tambem todo emulador rodando de AVD sem
-  state, com `hasState: false` (texto `sem state do devslim`), pid e o que o
-  `hardware-qemu.ini` tiver. Para AVD rodando, `launcher` diz quem o lancou
-  (`devslim`, `argent`, `other`; `null` parado ou sem linha legivel) e o texto
-  ganha o sufixo `lancado por argent` ou `lancado por fora do devslim` quando
-  nao foi o devslim. Para AVD rodando, `advertised` diz se ha entrada dele em
-  `avd/running/pid_<pid>.ini` com `grpc.port` e `grpc.token` (ver "Convivencia
-  com argent") e `grpcPort` traz a porta da entrada; parado, os dois vem
-  `null`. Entrada cujo pid ja morreu nao conta. Rodando sem anuncio, o texto ganha o sufixo ` sem anuncio gRPC`. O
-  valor do token nunca e lido para fora, so se ele existe.
-- `session` lista o que o devslim subiu. Entrada cujo device nao roda mais vem
-  com `stale: true`. `idleDown` traz `{ms, watcherPid, watcherAlive}` quando o
-  device subiu com `--idle-down` (ver "Auto-desligar") e `null` sem ele; no
-  texto, `auto-desligar em 30m sem app em uso (watcher pid N vivo)` ou `MORTO`.
-- `swap` traz `usedMb`, `totalMb` e `percent`, lidos de `sysctl vm.swapusage`.
-  Sem arquivo de swap ainda, o macOS responde `total = 0.00M  used = 0.00M`:
-  isso e leitura valida, `percent` 0 e texto `swap: 0 MB em uso (sem arquivo de
-  swap)`. `swap: nao lido` (campos `null`) so quando o comando falha ou a saida
-  nao parseia.
+- `ios` lists the booted simulators and every simulator with devslim state. For
+  those it counts how many labels of the saved profile are disabled in the store
+  and sets `drift: true` when the store lost entries, which happens after a
+  `simctl erase`. The fix is to run `devslim ios up` again.
+- `android` lists the AVDs with state, with the tune RAM and gpu, whether there
+  is a `slim_base` snapshot and whether it is running (by lock, by pgrep, or
+  both). When the `hardware-qemu.ini` of the last boot exists, it also shows what
+  the emulator actually used: `ramRequestedMb` (the `-memory` of the last `up` or
+  `bake`, saved as `lastLaunch` in the state; old state without the field uses
+  the tune one), `ramEffectiveMb`, `ramFloored` (effective above requested) and
+  `gpuEffective`. `ramMb` and `gpu` keep the requested values. In text: `ram
+  requested 2048 MB, effective 2560 MB (emulator raised it)`. An `up --ram 4096`
+  without `tune` that ran with 4096 MB does not show as raised. An AVD with state
+  whose directory is gone shows as `AVD not found (<dir>); orphan state: devslim
+  android forget <avd>`; a simulator with state that no longer exists in
+  `simctl` shows with state `missing` and the suffix `simulator no longer
+  exists; orphan state: devslim ios forget <udid>`. It also lists every running
+  emulator of an AVD without state, with `hasState: false` (text `no devslim
+  state`), pid and whatever the `hardware-qemu.ini` has. For a running AVD,
+  `launcher` says who launched it (`devslim`, `argent`, `other`; `null` when
+  stopped or with no readable line) and the text gets the suffix `launched by
+  argent` or `launched outside devslim` when it was not devslim. For a running
+  AVD, `advertised` says whether it has an entry in `avd/running/pid_<pid>.ini`
+  with `grpc.port` and `grpc.token` (see "Working with argent") and `grpcPort`
+  holds the entry's port; when stopped, both are `null`. An entry whose pid has
+  already died does not count. Running without an advertisement, the text gets
+  the suffix ` no gRPC advertisement`. The token value is never read out, only
+  whether it exists.
+- `session` lists what devslim started. An entry whose device no longer runs
+  comes with `stale: true`. `idleDown` holds `{ms, watcherPid, watcherAlive}`
+  when the device was started with `--idle-down` (see "Idle-down") and `null`
+  without it; in text, `idle-down after 30m with no app in use (watcher pid N
+  alive)` or `DEAD`.
+- `swap` holds `usedMb`, `totalMb` and `percent`, read from `sysctl
+  vm.swapusage`. With no swap file yet, macOS answers `total = 0.00M  used =
+  0.00M`: that is a valid reading, `percent` 0 and text `swap: 0 MB in use (no
+  swap file)`. `swap: not read` (fields `null`) only when the command fails or
+  the output does not parse.
 
-`doctor` devolve uma lista de `{id, level, message, fix?}` com `level` em `ok`,
-`warn` ou `fail`. Checagens, nesta ordem:
+`doctor` returns a list of `{id, level, message, fix?}` with `level` in `ok`,
+`warn` or `fail`. Checks, in this order:
 
-| id | o que olha |
+| id | what it looks at |
 |---|---|
-| `node` | versao 25 ou mais nova, senao fail |
-| `xcode` | `xcodebuild -version` e um runtime iOS 18.5 ou mais novo; sem Xcode e warn, simctl quebrado e fail |
-| `android-sdk` | SDK localizado com `emulator`, `adb` e `avdmanager`; SDK ausente e warn, binario faltando e fail |
-| `emulator-version` | `Pkg.Revision` abaixo de 37.2.13 e warn, versao sem o fix de vazamento de memoria GLES do host |
-| `avd-gpu` | `hw.gpu.mode` do `hardware-qemu.ini` do ultimo boot em lavapipe, swiftshader, software ou guest |
-| `avd-ram` | RAM do ultimo boot acima do pedido ou acima de 3072 MB. Pedido = `-memory` do ultimo `up`/`bake` (`lastLaunch` no state); sem o campo, o `hw.ramSize` do `config.ini`. Quando o emulador elevou, o fix e `tune <avd> --lowram` |
-| `profile-drift` | AVD com state do devslim cujo `config.ini` difere do que o perfil salvo produziria; warn lista cada chave como `chave: atual=X esperado=Y` |
-| `avd-image` | tag da system image (`tag.id`, senao `image.sysdir.1`) de cada AVD com state x capacidades que dependem de servicos Google (`push`, `weblogin`, `store`). `google_apis` ou playstore sem nenhuma delas: linha ok com a sugestao de ATD e o numero medido. ATD ou `default` com alguma delas: warn. AVD ausente, `config.ini` ilegivel ou sem tag: pulado |
-| `running-off-profile` | emulador rodando agora com GPU por software, ou AVD tunado lancado por outro que nao o devslim; fix em duas linhas (subir com `devslim android up` ou `ARGENT_EMULATOR_GPU_MODE=host`) |
-| `emulator-advertised` | emulador rodando sem entrada viva com `grpc.port` e `grpc.token` em `avd/running/`; o argent nao o enxerga para screenshot e tap. Entradas de pid morto viram uma linha ok com a contagem |
-| `argent-gpu` | argent no PATH sem `ARGENT_EMULATOR_GPU_MODE=host` |
-| `default-boot-snapshot` | AVD com `snapshots/default_boot/ram.bin`, com o tamanho |
-| `orphan-images` | system image que nenhum `config.ini` usa, com o tamanho; nunca apaga |
-| `swap` | acima de 80% e warn, acima de 95% e fail (mesmos limites e mesma mensagem da recusa do `up`); sem arquivo de swap (total 0) e ok com 0 MB em uso |
-| `ios-always-enabled` | store de simulador que desliga assistantd, gamed ou sharingd |
-| `stale-session` | entradas mortas na sessao; e, para device rodando com auto-desligar, watcher cujo pid morreu (fix: `devslim <plataforma> up <id> --idle-down <dur>` ou `devslim down`) |
-| `orphan-state` | state do devslim cujo AVD (diretorio `.avd`) ou simulador (UDID fora do `simctl list devices`) nao existe mais: um warn por arquivo, com o caminho e o fix `devslim android forget <avd>` ou `devslim ios forget <udid>`. Sem `simctl`, os states iOS saem como nao verificados. So le |
+| `node` | version 25 or newer, otherwise fail |
+| `xcode` | `xcodebuild -version` and an iOS 18.5 or newer runtime; no Xcode is warn, broken simctl is fail |
+| `android-sdk` | SDK found with `emulator`, `adb` and `avdmanager`; missing SDK is warn, missing binary is fail |
+| `emulator-version` | `Pkg.Revision` below 37.2.13 is warn, a version without the host GLES memory leak fix |
+| `avd-gpu` | `hw.gpu.mode` of the last boot's `hardware-qemu.ini` in lavapipe, swiftshader, software or guest |
+| `avd-ram` | last boot RAM above the request or above 3072 MB. Request = `-memory` of the last `up`/`bake` (`lastLaunch` in the state); without the field, the `hw.ramSize` of `config.ini`. When the emulator raised it, the fix is `tune <avd> --lowram` |
+| `profile-drift` | AVD with devslim state whose `config.ini` differs from what the saved profile would produce; warn lists each key as `key: current=X expected=Y` |
+| `avd-image` | system image tag (`tag.id`, else `image.sysdir.1`) of each AVD with state vs capabilities that depend on Google services (`push`, `weblogin`, `store`). `google_apis` or playstore with none of them: ok line with the ATD suggestion and the measured number. ATD or `default` with any of them: warn. Missing AVD, unreadable `config.ini` or no tag: skipped |
+| `running-off-profile` | emulator running now with a software GPU, or a tuned AVD launched by something other than devslim; fix in two lines (start with `devslim android up` or `ARGENT_EMULATOR_GPU_MODE=host`) |
+| `emulator-advertised` | emulator running without a live entry with `grpc.port` and `grpc.token` in `avd/running/`; argent does not see it for screenshot and tap. Entries of a dead pid become an ok line with the count |
+| `argent-gpu` | argent on the PATH without `ARGENT_EMULATOR_GPU_MODE=host` |
+| `default-boot-snapshot` | AVD with `snapshots/default_boot/ram.bin`, with the size |
+| `orphan-images` | system image that no `config.ini` uses, with the size; never deletes |
+| `swap` | above 80% is warn, above 95% is fail (same limits and same message as the `up` refusal); no swap file (total 0) is ok with 0 MB in use |
+| `ios-always-enabled` | simulator store that disables assistantd, gamed or sharingd |
+| `stale-session` | dead entries in the session; and, for a running device with idle-down, a watcher whose pid died (fix: `devslim <platform> up <id> --idle-down <dur>` or `devslim down`) |
+| `orphan-state` | devslim state whose AVD (`.avd` directory) or simulator (UDID missing from `simctl list devices`) no longer exists: one warn per file, with the path and the fix `devslim android forget <avd>` or `devslim ios forget <udid>`. Without `simctl`, iOS states show as unverified. Read-only |
 
-`avd-image` so le. A nota de imagem mais leve sai como ok (nao conta como warn
-nem muda o exit) e traz o fix `devslim android create <avd>-atd --image
-aosp_atd`, com `--api N` quando a imagem atual nao e da API 35. O warn de ATD
-com `push`, `weblogin` ou `store` diz que a capacidade nao funciona nessa imagem
-(no `google_atd`, que tem servicos Google reduzidos, diz que pode nao funcionar)
-e sugere `create <avd>-gapis --image google_apis`.
+`avd-image` only reads. The lighter image note shows as ok (it does not count
+as warn nor change the exit) and carries the fix `devslim android create
+<avd>-atd --image aosp_atd`, with `--api N` when the current image is not API
+35. The ATD warn with `push`, `weblogin` or `store` says the capability does not
+work on that image (on `google_atd`, which has reduced Google services, it says
+it may not work) and suggests `create <avd>-gapis --image google_apis`.
 
-`profile-drift` compara, para cada AVD em `$DEVSLIM_HOME/state/android/`, o
-`config.ini` atual com o que o `tune` gravaria a partir do perfil salvo (as
-mesmas chaves e valores do `plan`). So le. O fix e `devslim android tune
-<avd>`, que volta ao perfil salvo. Quando ligar ou desligar uma capacidade
-explica o drift, o fix sugere antes o `--need` com a lista completa: por
-exemplo `hw.gps=yes` com perfil sem `location` sugere `devslim android tune
-<avd> --need camera,location` se o perfil ja tinha `camera`. AVD com state que
-nao existe mais ou com `config.ini` ilegivel e pulado e contado na linha ok.
+`profile-drift` compares, for each AVD in `$DEVSLIM_HOME/state/android/`, the
+current `config.ini` with what `tune` would write from the saved profile (the
+same keys and values as `plan`). Read-only. The fix is `devslim android tune
+<avd>`, which goes back to the saved profile. When turning a capability on or
+off explains the drift, the fix first suggests `--need` with the full list: for
+example `hw.gps=yes` with a profile without `location` suggests `devslim android
+tune <avd> --need camera,location` if the profile already had `camera`. An AVD
+with state that no longer exists or with an unreadable `config.ini` is skipped
+and counted in the ok line.
 
-`down` remove da sessao as entradas mortas sem mandar comando nenhum ao device e
-delega o resto para `android down` e `ios down`. Com `--force` tambem desliga o
-que o devslim nao subiu. Se faltar a ferramenta de uma plataforma (sem SDK
-Android, sem Xcode) e nao houver nada vivo dela na sessao, o `down --force` pula
-essa plataforma, avisa em stderr (`devslim: aviso: down --force pulou android:
-<motivo>`) e devolve uma entrada `result: "skipped"` com o motivo em `detail`
-(e `name` e `id` vazios) no array do `--json`. Pular nao e falha: o exit
-continua 0 se o resto deu certo.
+`down` removes dead entries from the session without sending any command to the
+device and delegates the rest to `android down` and `ios down`. With `--force`
+it also shuts down what devslim did not start. If a platform's tooling is
+missing (no Android SDK, no Xcode) and nothing of it is alive in the session,
+`down --force` skips that platform, warns on stderr (`devslim: warning: down
+--force skipped android: <reason>`) and returns an entry `result: "skipped"`
+with the reason in `detail` (and empty `name` and `id`) in the `--json` array.
+Skipping is not a failure: the exit stays 0 if the rest succeeded.
 
-`prune` tira da sessao so as entradas cujo device ja nao roda, pela mesma
-deteccao do `STALE` do `status` (Android sem lock nem qemu; simulador
-desligado ou que nao existe mais), junto com o registro do auto-desligar
-delas. Nao desliga device, nao manda sinal ao watcher (ele sai sozinho ao ver a
-entrada sumida) e nao apaga state. Imprime uma linha `removido da sessao:
-<plataforma> <nome> <id> (<motivo>)` por entrada, ou `nada a limpar`; no
-`--json`, `{removed: [...]}`.
+`prune` drops from the session only the entries whose device no longer runs,
+using the same detection as the `STALE` of `status` (Android with no lock and
+no qemu; simulator shut down or gone), together with their idle-down record. It
+does not shut down any device, does not signal the watcher (it exits on its own
+when it sees the entry gone) and does not delete state. It prints one line
+`removed from session: <platform> <name> <id> (<reason>)` per entry, or
+`nothing to clean up`; with `--json`, `{removed: [...]}`.
 
-Toda escrita em `session.json` (`up`, `down`, `prune`, `forget` e o watcher do
-auto-desligar, que sao processos separados) passa por um lock consultivo:
-`session.json.lock`, criado com `wx` e com o pid dono e a hora. Quem chega
-espera em passos de 50 ms ate 5 s. Lock com mais de 30 s ou de pid morto e
-tratado como abandonado e removido. Passou dos 5 s, o comando para com erro
-citando o arquivo e o pid dono. A gravacao continua atomica (arquivo temporario
-e rename).
+Every write to `session.json` (`up`, `down`, `prune`, `forget` and the idle-down
+watcher, which are separate processes) goes through an advisory lock:
+`session.json.lock`, created with `wx` and holding the owner pid and the time.
+A newcomer waits in 50 ms steps up to 5 s. A lock older than 30 s or with a dead
+pid is treated as abandoned and removed. Past 5 s, the command stops with an
+error naming the file and the owner pid. The write is still atomic (temporary
+file and rename).
 
-`measure --json` devolve um array com os mesmos objetos
-de `android measure` e `ios measure`; sem nada rodando, devolve `[]` e sai com 0.
+`measure --json` returns an array with the same objects
+as `android measure` and `ios measure`; with nothing running, it returns `[]` and exits 0.
 
-No Android, `host` traz tres numeros do processo qemu, qualquer um pode ser
-`null`: `footprintMb` (linha `phys_footprint:` do `footprint -p`),
-`footprintHeaderMb` (o `Footprint: N MB` do cabecalho do mesmo comando) e
-`rssMb` (`ps -o rss=`). Os dois footprints divergem em processo que usa
-Hypervisor.framework, como o qemu, entao a comparacao antes/depois deve usar
-sempre o mesmo campo. O texto mostra os tres.
+On Android, `host` holds three numbers for the qemu process, any of which can be
+`null`: `footprintMb` (the `phys_footprint:` line of `footprint -p`),
+`footprintHeaderMb` (the `Footprint: N MB` of the same command's header) and
+`rssMb` (`ps -o rss=`). The two footprints diverge for a process that uses
+Hypervisor.framework, such as qemu, so a before/after comparison must always use
+the same field. The text shows all three.
 
-## Fluxo Android
+## Android workflow
 
 ```
-devslim android create slim-api35        # AVD novo (google_apis); aplica o tune com tela 720x1600@320, nao boota
-devslim android create ui-api35 --image aosp_atd   # ou: imagem ATD, mais leve, para teste de UI e logica
-devslim android tune slim-api35          # ou: tune num AVD existente (backup do config.ini antes)
-devslim android bake slim-api35          # uma vez: boota, enxuga via adb, grava slim_base, desliga
-devslim android up slim-api35            # dia a dia: sobe do slim_base com flags economicas
-devslim android up slim-api35 --idle-down 30m   # ou: desliga sozinho depois de 30 min sem app em uso
-devslim down                             # desliga o que subiu
-devslim android up slim-api35            # restore precisa do AVD rodando se houve bake
-devslim android restore slim-api35       # religa pacotes, devolve settings e o config.ini byte a byte
-devslim android forget velho-api35       # AVD apagado por fora: apaga so o state que sobrou
+devslim android create slim-api35        # new AVD (google_apis); applies tune with a 720x1600@320 screen, does not boot
+devslim android create ui-api35 --image aosp_atd   # or: ATD image, lighter, for UI and logic tests
+devslim android tune slim-api35          # or: tune an existing AVD (backs up config.ini first)
+devslim android bake slim-api35          # once: boots, slims down via adb, saves slim_base, shuts down
+devslim android up slim-api35            # day to day: boots from slim_base with lean flags
+devslim android up slim-api35 --idle-down 30m   # or: shuts down on its own after 30 min with no app in use
+devslim down                             # shuts down what was started
+devslim android up slim-api35            # restore needs the AVD running if it was baked
+devslim android restore slim-api35       # re-enables packages, restores settings and config.ini byte for byte
+devslim android forget old-api35         # AVD deleted elsewhere: deletes only the leftover state
 ```
 
-O `tune` grava RAM (padrao 2048 MB; ver abaixo o piso do emulador), heap, 2
-cores, `hw.gpu.mode=host`, sensores, GPS e cameras desligados, e apaga `hardware-qemu.ini` e `snapshots/`, que o
-emulador regenera. `plan` e `tune` mostram o tamanho de `snapshots/` na linha
-`apagaria`/`removido` (e `snapshotsMb` no JSON). `plan`, `tune`, `up` e `bake`
-partem do perfil gravado pelo ultimo `tune`; flags dadas na linha sobrepoem so
-o que dizem. Assim `tune --screen 720x1600@320` depois de `tune --need location
---ram 3072` mantem RAM e `location` e muda so `hw.lcd.*`. `--need a,b` e `--for
-<dir>` substituem a lista de capacidades salva (nao unem); `--need none` limpa.
-`--reset` (so `plan` e `tune`) ignora o perfil salvo e parte do padrao. Quando
-herda, `plan` e `tune` mostram a linha `perfil herdado do tune anterior`
-(`inheritedProfile` no JSON). O backup do `config.ini` no state continua o do
-primeiro tune. O emulador sobe com `-gpu host -memory N -cores 2 -port N
--grpc G -grpc-use-token -no-window -no-audio -camera-back none -camera-front
-none -feature -Vulkan -no-boot-anim -no-metrics`, com `G = 8554 + (N - 5554)`, e
-`-lowram` antes de `-no-boot-anim` quando o perfil tem lowram.
-Sem `--port`, o `plan` mostra a linha com `-grpc 8554` e o sufixo `(gRPC 8554
-de referencia; porta definida no up)`, porque o `up` escolhe a porta livre na
-hora.
+`tune` writes RAM (default 2048 MB; see the emulator floor below), heap, 2
+cores, `hw.gpu.mode=host`, sensors, GPS and cameras off, and deletes `hardware-qemu.ini` and `snapshots/`, which the
+emulator regenerates. `plan` and `tune` show the size of `snapshots/` on the
+`tune would delete`/`removed` line (and `snapshotsMb` in the JSON). `plan`,
+`tune`, `up` and `bake` start from the profile saved by the last `tune`; flags
+given on the command line override only what they say. So `tune --screen
+720x1600@320` after `tune --need location --ram 3072` keeps RAM and `location`
+and changes only `hw.lcd.*`. `--need a,b` and `--for <dir>` replace the saved
+capability list (they do not merge); `--need none` clears it. `--reset` (only
+`plan` and `tune`) ignores the saved profile and starts from the defaults. When
+inheriting, `plan` and `tune` show the line `profile inherited from the previous
+tune` (`inheritedProfile` in the JSON). The `config.ini` backup in the state is
+still the one from the first tune. The emulator starts with `-gpu host -memory N
+-cores 2 -port N -grpc G -grpc-use-token -no-window -no-audio -camera-back none
+-camera-front none -feature -Vulkan -no-boot-anim -no-metrics`, with `G = 8554 +
+(N - 5554)`, and `-lowram` before `-no-boot-anim` when the profile has lowram.
+Without `--port`, `plan` shows the line with `-grpc 8554` and the suffix `(gRPC
+8554 for reference; port chosen at up)`, because `up` picks a free port at
+launch.
 
-Piso de RAM. O emulador eleva sem erro qualquer `-memory` abaixo do piso dele,
-a menos que o `-lowram` esteja ligado (ver "Numeros medidos"). Pisos vistos ate
-agora: 2560 MB num phone pixel_7 e 4096 MB num tablet 2560x1600; sao duas
-observacoes, nao uma regra. Tela menor nao baixa o piso: com 720x1600@320 o
-emulador continuou em 2560 MB. `--ram 1536` sem lowram tambem virou 2560 MB.
-Com lowram o pedido vale (`--aggressive`, 1536 MB com lowram, ficou em 1536
-MB), mas o guest passa a se declarar aparelho de pouca RAM, o que muda o
-comportamento dos apps.
+RAM floor. The emulator silently raises any `-memory` below its floor, unless
+`-lowram` is on (see "Measured numbers"). Floors seen so far: 2560 MB on a
+pixel_7 phone and 4096 MB on a 2560x1600 tablet; these are two observations, not
+a rule. A smaller screen does not lower the floor: with 720x1600@320 the
+emulator stayed at 2560 MB. `--ram 1536` without lowram also became 2560 MB.
+With lowram the request sticks (`--aggressive`, 1536 MB with lowram, stayed at
+1536 MB), but the guest then reports itself as a low-RAM device, which changes
+app behavior.
 
-Depois do boot, o `up` le o `hardware-qemu.ini` (ou, sem ele, a linha
-`Increasing RAM size to N MB` do log deste boot), devolve `ramEffectiveMb` e,
-se a efetiva passou da pedida, avisa em stderr com os dois valores, o rotulo
-`(emulador elevou)`, a linha do log deste boot quando ela existe e a saida:
-`devslim android tune <avd> --lowram` com o AVD desligado, com o aviso de que o
-lowram muda o comportamento dos apps. Se o perfil ja tinha lowram, o aviso diz
-`emulador elevou mesmo com lowram` e nao sugere nada.
+After boot, `up` reads `hardware-qemu.ini` (or, without it, the line
+`Increasing RAM size to N MB` from this boot's log), returns `ramEffectiveMb`
+and, if the effective value exceeded the requested one, warns on stderr with
+both values, the label `(emulator raised it)`, this boot's log line when it
+exists, and the way out: `devslim android tune <avd> --lowram` with the AVD shut
+down, with the warning that lowram changes app behavior. If the profile already
+had lowram, the warning says `emulator raised it even with lowram` and suggests
+nothing.
 
-`plan` e `tune` imprimem uma linha `nota:` (campo `ramNote` no JSON, `null`
-sem nota) quando o perfil pede menos de 2560 MB sem lowram: o emulador deve
-elevar o pedido, com os dois pisos observados, e `--lowram` faz o pedido valer.
-Se o ultimo boot deste AVD (o `hardware-qemu.ini`, lido antes do `tune` apaga-lo)
-mostra que o emulador elevou o pedido, a nota cita esse valor no lugar dos pisos
-genericos e some quando o pedido novo ja passa dele. O pedido comparado e o
-`-memory` do ultimo `up`/`bake` (`lastLaunch: {ramMb, lowRam, at}` no state, que
-eles gravam a cada lancamento), nao o do perfil: `up --ram 4096` sem `tune` nao
-vira elevacao. State antigo sem o campo usa o perfil do tune. Um `tune` que
-reescreve o `config.ini` (e apaga o `hardware-qemu.ini`) descarta o
-`lastLaunch`; um `tune` sem mudanca o mantem. AVD sem state nao ganha state no
-`up`.
+`plan` and `tune` print a `note:` line (`ramNote` field in the JSON, `null`
+without a note) when the profile requests less than 2560 MB without lowram: the
+emulator will likely raise the request, with the two observed floors, and
+`--lowram` makes the request stick. If this AVD's last boot (the
+`hardware-qemu.ini`, read before `tune` deletes it) shows that the emulator
+raised the request, the note cites that value instead of the generic floors and
+goes away when the new request already exceeds it. The request compared is the
+`-memory` of the last `up`/`bake` (`lastLaunch: {ramMb, lowRam, at}` in the
+state, which they write on every launch), not the profile one: `up --ram 4096`
+without `tune` does not count as a raise. Old state without the field uses the
+tune profile. A `tune` that rewrites `config.ini` (and deletes
+`hardware-qemu.ini`) discards `lastLaunch`; a `tune` with no change keeps it.
+An AVD without state does not get state on `up`.
 
-Se o AVD ja esta rodando, o `up` nao sobe outro e devolve o existente, com
-`launcher` e `gpuEffective`. Quando quem lancou nao foi o devslim ou a GPU
-efetiva e por software, avisa em stderr com os fatos e a saida: `devslim
-android down <avd> --force` e subir de novo. Nunca derruba sozinho.
+If the AVD is already running, `up` does not start another one and returns the
+existing one, with `launcher` and `gpuEffective`. When the launcher was not
+devslim or the effective GPU is software, it warns on stderr with the facts and
+the way out: `devslim android down <avd> --force` and start it again. It never
+shuts it down on its own.
 
-Quando o `up` sobe sem `slim_base`, a ultima linha sugere `devslim android bake
-<avd>` (campo `hint` no `--json`). Partindo do snapshot, nao ha dica.
+When `up` starts without `slim_base`, the last line suggests `devslim android
+bake <avd>` (`hint` field in `--json`). Starting from the snapshot, there is no
+hint.
 
-Swap: `up`, `bake` e `ios up` recusam bootar com swap acima de 95%, com a mesma
-mensagem do `doctor`; `--force` boota mesmo assim. Entre 80% e 95% so avisam.
-Device que ja estava rodando nunca e bloqueado por swap.
+Swap: `up`, `bake` and `ios up` refuse to boot with swap above 95%, with the
+same message as `doctor`; `--force` boots anyway. Between 80% and 95% they only
+warn. A device that was already running is never blocked by swap.
 
-Flags de perfil: `--ram N` (1536 a 8192), `--aggressive` (1536 MB e `-lowram`),
-`--lowram`, `--no-lowram`, `--gpu M`, `--vulkan`, `--screen keep|LxA@dpi`,
-`--port N`, `--need a,b`, `--for <dir>`, `--no-grpc` e `--grpc`. `--lowram`,
-`--no-lowram`, `--no-grpc` e `--grpc` tambem valem no `bake`. `devslim android
-plan <avd>` mostra o diff do `config.ini` e a linha do emulador sem escrever
-nada.
+Profile flags: `--ram N` (1536 to 8192), `--aggressive` (1536 MB and `-lowram`),
+`--lowram`, `--no-lowram`, `--gpu M`, `--vulkan`, `--screen keep|WxH@dpi`,
+`--port N`, `--need a,b`, `--for <dir>`, `--no-grpc` and `--grpc`. `--lowram`,
+`--no-lowram`, `--no-grpc` and `--grpc` also apply to `bake`. `devslim android
+plan <avd>` shows the `config.ini` diff and the emulator command line without
+writing anything.
 
-`--lowram` liga `-lowram` sem mudar a RAM; o `tune` grava `lowRam: true` no
-perfil e os comandos seguintes herdam. `--no-lowram` tira o lowram salvo ou o
-do `--aggressive` (`--aggressive --no-lowram` = 1536 MB sem lowram). As duas
-juntas sao erro de uso. `--aggressive` continua sendo 1536 MB mais lowram em
-`plan`, `tune` e `up`; no `bake` ele e so o nivel da lista de bloat.
+`--lowram` turns on `-lowram` without changing RAM; `tune` saves `lowRam: true`
+in the profile and later commands inherit it. `--no-lowram` drops the saved
+lowram or the one from `--aggressive` (`--aggressive --no-lowram` = 1536 MB
+without lowram). Both together are a usage error. `--aggressive` is still 1536
+MB plus lowram in `plan`, `tune` and `up`; in `bake` it is only the bloat list
+level.
 
-`create` aceita em `--image` o id completo
-(`system-images;android-35;google_apis;arm64-v8a`) ou um atalho: `google_apis` (padrao), `google_atd`, `aosp_atd` ou `default`,
-expandido para `system-images;android-<api>;<tag>;<abi>`. `--api N` escolhe a
-API do atalho (padrao 35) e nao combina com id completo. A ABI segue o host:
-`arm64-v8a` no Apple Silicon, `x86_64` no resto. Antes de chamar o
-`avdmanager`, o `create` confere se a imagem existe em
-`<sdk>/system-images/android-<api>/<tag>/<abi>`; se nao existe, para com o
-comando exato `sdkmanager "<id>"`. O devslim nunca baixa imagem sozinho.
+`create` accepts in `--image` the full id
+(`system-images;android-35;google_apis;arm64-v8a`) or a shortcut: `google_apis` (default), `google_atd`, `aosp_atd` or `default`,
+expanded to `system-images;android-<api>;<tag>;<abi>`. `--api N` picks the
+shortcut's API (default 35) and does not combine with a full id. The ABI follows
+the host: `arm64-v8a` on Apple Silicon, `x86_64` elsewhere. Before calling
+`avdmanager`, `create` checks that the image exists in
+`<sdk>/system-images/android-<api>/<tag>/<abi>`; if it does not, it stops with
+the exact command `sdkmanager "<id>"`. devslim never downloads an image on its
+own.
 
-Qual imagem usar. As imagens ATD nao tem servicos Google (`aosp_atd`) ou tem
-servicos reduzidos (`google_atd`); `default` e AOSP puro. Sao mais leves (ver
-"Numeros medidos"), mas no `aosp_atd` nao ha login com Google, push FCM nem
-compra com Play Billing. Use ATD para teste de UI e de logica, e `google_apis`
-quando o teste precisa de login, push ou compra. O `doctor` (`avd-image`)
-aponta os dois desencontros.
+Which image to use. ATD images have no Google services (`aosp_atd`) or reduced
+services (`google_atd`); `default` is plain AOSP. They are lighter (see
+"Measured numbers"), but `aosp_atd` has no Google sign-in, FCM push or Play
+Billing purchases. Use ATD for UI and logic tests, and `google_apis` when the
+test needs sign-in, push or purchases. `doctor` (`avd-image`) points out both
+mismatches.
 
-`forget <avd>` apaga o state de um AVD que nao existe mais (o `status` e o
-`doctor` apontam) e a entrada dele na sessao, se houver, sem nenhum comando ao
-emulador. Com o AVD ainda no disco ele recusa e manda usar `restore`, que
-desfaz o tune; `--force` apaga o registro mesmo assim e avisa que o AVD nao foi
-tocado. Sem state nem entrada na sessao, e erro.
+`forget <avd>` deletes the state of an AVD that no longer exists (`status` and
+`doctor` point it out) and its session entry, if any, without any command to the
+emulator. With the AVD still on disk it refuses and tells you to use `restore`,
+which undoes the tune; `--force` deletes the record anyway and warns that the
+AVD was not touched. With no state and no session entry, it is an error.
 
-O `bake` desliga pacotes da lista gerida que existem na imagem (`--aggressive`
-inclui Play Store, assistentes de setup e o Gboard), zera escalas de animacao,
-desliga `auto_sync` e a tela de stylus, roda dexopt e `am kill-all`, e grava o
-snapshot.
-Nunca desliga bluetooth nem Chrome. O state fica em
+`bake` disables packages from the managed list that exist in the image
+(`--aggressive` includes the Play Store, setup wizards and Gboard), zeroes
+animation scales, turns off `auto_sync` and the stylus screen, runs dexopt and
+`am kill-all`, and saves the snapshot.
+It never disables Bluetooth or Chrome. The state lives in
 `~/.devslim/state/android/<avd>.json`.
 
-## Fluxo iOS
+## iOS workflow
 
 ```
-devslim ios plan QA-iPhone17             # so leitura: o que o up desligaria e o que repararia
-devslim ios up QA-iPhone17               # escreve o store com o device desligado, boota e confere
-devslim ios up QA-iPhone17 --idle-down 30m   # ou: desliga sozinho depois de 30 min sem app em uso
-devslim ios off QA-iPhone17              # devolve cada label ao valor salvo
-devslim ios forget 71DA7575-...          # simulador apagado por fora: apaga so o state que sobrou
+devslim ios plan QA-iPhone17             # read-only: what up would disable and what it would repair
+devslim ios up QA-iPhone17               # writes the store with the device shut down, boots and verifies
+devslim ios up QA-iPhone17 --idle-down 30m   # or: shuts down on its own after 30 min with no app in use
+devslim ios off QA-iPhone17              # returns each label to its saved value
+devslim ios forget 71DA7575-...          # simulator deleted elsewhere: deletes only the leftover state
 ```
 
-Aceita UDID ou nome exato. O perfil padrao desliga os 173 labels geridos, em 16
-categorias (`devslim ios categories`). Ele quebra push remoto, StoreKit,
-universal links e login com Apple ID; religue com `--need` o que o app usa.
-`--except cat,cat` mantem categorias inteiras e `--keep label` mantem labels
-avulsos.
+Accepts a UDID or an exact name. The default profile disables the 173 managed
+labels, in 16 categories (`devslim ios categories`). It breaks remote push,
+StoreKit, universal links and Apple ID sign-in; re-enable what the app uses with
+`--need`. `--except cat,cat` keeps whole categories and `--keep label` keeps
+individual labels.
 
-O simulador entra na sessao sempre que o `up` bootou: do zero ou num reboot
-para aplicar o perfil a um simulador que ja estava bootado fora do perfil.
-Assim `ios down` (sem `--force`) e `--idle-down` valem nos dois casos. Se ele
-ja estava na sessao, a entrada fica como estava. Simulador ja bootado e ja
-enxuto nao e rebootado nem entra na sessao; com `--idle-down`, o aviso diz
-`simulador ja estava bootado e enxuto; devslim nao o subiu`.
+The simulator enters the session whenever `up` booted it: from scratch or in a
+reboot to apply the profile to a simulator that was already booted outside the
+profile. So `ios down` (without `--force`) and `--idle-down` work in both cases.
+If it was already in the session, the entry stays as it was. A simulator that is
+already booted and already slim is not rebooted and does not enter the session;
+with `--idle-down`, the warning says `simulator was already booted and slim;
+devslim did not start it`.
 
-`ios forget <udid|nome>` apaga o state de um simulador que nao existe mais (por
-UDID ou pelo nome salvo no state) e a entrada dele na sessao. Simulador que
-ainda existe e recusado (o certo e `ios off`); `--force` apaga o registro mesmo
-assim. Se o `simctl` falha, nao da para conferir e ele tambem recusa sem
-`--force`. Nunca manda comando ao simulador.
+`ios forget <udid|name>` deletes the state of a simulator that no longer exists
+(by UDID or by the name saved in the state) and its session entry. A simulator
+that still exists is refused (the right command is `ios off`); `--force`
+deletes the record anyway. If `simctl` fails, it cannot check and it also
+refuses without `--force`. It never sends a command to the simulator.
 
-O `up` salva em `~/.devslim/state/ios/<UDID>.json` o valor anterior de cada label
-que muda, e o primeiro backup vence. Depois do boot ele confere com `launchctl
-print-disabled`. Se algum label nao pegou, cai em `launchctl disable/enable` por
-label e reboota; o que ainda faltar sai na lista e o exit code e 3.
+`up` saves in `~/.devslim/state/ios/<UDID>.json` the previous value of each label
+it changes, and the first backup wins. After boot it verifies with `launchctl
+print-disabled`. If some label did not stick, it falls back to `launchctl
+disable/enable` per label and reboots; whatever is still missing goes in the list
+and the exit code is 3.
 
-`com.apple.assistantd`, `com.apple.gamed` e `com.apple.sharingd` ficam sempre
-ligados. Se o store de um device ja os traz desligados (herdado de outra
-ferramenta), o `up` grava os tres como ligados, salva o valor antigo e confere
-depois do boot. O `off` devolve o valor salvo. `--keep` e `--except` nao
-alcancam esse reparo. `plan` mostra o que seria reparado em `repair`.
+`com.apple.assistantd`, `com.apple.gamed` and `com.apple.sharingd` always stay
+enabled. If a device's store already has them disabled (inherited from another
+tool), `up` writes all three as enabled, saves the old value and verifies after
+boot. `off` restores the saved value. `--keep` and `--except` do not reach this
+repair. `plan` shows what would be repaired in `repair`.
 
-## Capacidades
+## Capabilities
 
-| capacidade | iOS | Android | quando |
+| capability | iOS | Android | when |
 |---|---|---|---|
-| `audio` | nada | `hw.audioOutput`, sem `-no-audio` | app com som |
-| `camera` | categoria `photos` | cameras emuladas | app com camera ou galeria |
-| `keyboard` | nada | `bake --aggressive` mantem o Gboard (`com.google.android.inputmethod.latin`) | testar layout que desvia do teclado na tela |
-| `location` | `com.apple.MapKit.SnapshotService` | `hw.gps=yes`; `bake` mantem o Google Maps (`com.google.android.apps.maps`) | app com mapa ou localizacao |
-| `push` | `com.apple.apsd` | nada | expo-notifications |
-| `store` | categorias `store` e `icloud` | AVD com Play Store separado | so ao testar compra |
-| `weblogin` | categoria `web` | nada, Chrome nunca e desligado | google-signin, universal links |
-| `window` | abre o Simulator.app | sem `-no-window` | uso manual |
+| `audio` | nothing | `hw.audioOutput`, without `-no-audio` | app with sound |
+| `camera` | `photos` category | emulated cameras | app with camera or gallery |
+| `keyboard` | nothing | `bake --aggressive` keeps Gboard (`com.google.android.inputmethod.latin`) | testing layouts that move around the on-screen keyboard |
+| `location` | `com.apple.MapKit.SnapshotService` | `hw.gps=yes`; `bake` keeps Google Maps (`com.google.android.apps.maps`) | app with map or location |
+| `push` | `com.apple.apsd` | nothing | expo-notifications |
+| `store` | `store` and `icloud` categories | separate AVD with Play Store | only when testing purchases |
+| `weblogin` | `web` category | nothing, Chrome is never disabled | google-signin, universal links |
+| `window` | opens Simulator.app | without `-no-window` | manual use |
 
-`--for <dir>` le o `package.json` do app e deriva `audio`, `camera`, `location`,
-`push` e `weblogin`. `location` vem de `expo-location`,
+`--for <dir>` reads the app's `package.json` and derives `audio`, `camera`,
+`location`, `push` and `weblogin`. `location` comes from `expo-location`,
 `react-native-geolocation-service`, `@react-native-community/geolocation`,
-`@rnmapbox/maps` ou `react-native-maps`. `store`, `window` e `keyboard` so
-entram por `--need`.
+`@rnmapbox/maps` or `react-native-maps`. `store`, `window` and `keyboard` only
+come in through `--need`.
 
-O Gboard so entra na lista `--aggressive`, nunca na padrao. Sem ele o texto
-continua chegando por `adb shell input` ou pelo input do argent, mas nao da
-para testar layout que desvia do teclado na tela; para isso use `--need
-keyboard`. Um `bake` com `keyboard` religa o Gboard desligado por um `bake`
-anterior, e o `restore` religa como qualquer pacote da lista. Imagem que nao
-tem o Gboard so pula o pacote, como qualquer outro da lista.
+Gboard is only on the `--aggressive` list, never on the default one. Without it,
+text still arrives via `adb shell input` or argent's input, but you cannot test
+layouts that move around the on-screen keyboard; for that use `--need
+keyboard`. A `bake` with `keyboard` re-enables a Gboard disabled by a previous
+`bake`, and `restore` re-enables it like any package on the list. An image that
+has no Gboard just skips the package, like any other on the list.
 
-No iOS, CoreLocation (`com.apple.locationd`) e GeoServices (`com.apple.geod`,
-tiles e geocoding do MapKit) nao estao na lista gerida e nunca sao desligados,
-com ou sem `location`. Da lista, `location` so religa o XPC de snapshot do
-MapKit. No Android, o enxugamento via adb nunca mexe em settings de localizacao.
-Sem `location`, o `bake` desliga o Google Maps junto com os outros apps de
-midia; com `location`, ele fica ligado nos dois niveis (padrao e
-`--aggressive`), do mesmo jeito que `camera` mantem `com.android.camera2`. Um
-`bake` com `location` religa o Maps desligado por um `bake` anterior.
+On iOS, CoreLocation (`com.apple.locationd`) and GeoServices (`com.apple.geod`,
+MapKit tiles and geocoding) are not on the managed list and are never disabled,
+with or without `location`. From the list, `location` only re-enables the MapKit
+snapshot XPC. On Android, slimming via adb never touches location settings.
+Without `location`, `bake` disables Google Maps along with the other media apps;
+with `location`, it stays enabled at both levels (default and `--aggressive`),
+the same way `camera` keeps `com.android.camera2`. A `bake` with `location`
+re-enables Maps disabled by a previous `bake`.
 
-## Convivencia com argent
+## Working with argent
 
-Fato medido em 2026-11-16: o argent lancou `qa-tablet-api35` sozinho com
+Fact measured on 2026-11-16: argent launched `qa-tablet-api35` on its own with
 `-avd qa-tablet-api35 -no-snapshot-load -gpu auto -feature -Vulkan -noaudio
--no-boot-anim -netfast -no-metrics -crash-report-mode never`. O `config.ini` do
-AVD tinha `hw.gpu.mode=host`, mas o `-gpu auto` da linha de comando venceu: o
-`hardware-qemu.ini` desse boot saiu com `hw.gpu.mode = lavapipe` (renderizacao
-por software) e `hw.ramSize = 4096`. O tune do `config.ini` nao protege contra
-isso; quem decide e a linha de comando.
+-no-boot-anim -netfast -no-metrics -crash-report-mode never`. The AVD's
+`config.ini` had `hw.gpu.mode=host`, but the command line `-gpu auto` won: that
+boot's `hardware-qemu.ini` came out with `hw.gpu.mode = lavapipe` (software
+rendering) and `hw.ramSize = 4096`. Tuning `config.ini` does not protect against
+this; the command line decides.
 
-Ordem correta:
+Correct order:
 
-1. Suba o device com `devslim android up <avd>`.
-2. Abra o argent depois. Comprovado: ele reaproveita o emulador do devslim nas
-   ferramentas que usam adb (`reinstall-app`, `launch-app`) e no screenshot. As
-   de tela (screenshot, describe, tap) dependem do anuncio gRPC descrito abaixo.
-3. Nunca peca ao argent um boot com force sobre um AVD que o devslim gerencia:
-   ele relanca com `-gpu auto` e sem `-memory`.
+1. Start the device with `devslim android up <avd>`.
+2. Open argent afterwards. Confirmed: it reuses the devslim emulator in the
+   tools that use adb (`reinstall-app`, `launch-app`) and in screenshot. The
+   screen tools (screenshot, describe, tap) depend on the gRPC advertisement
+   described below.
+3. Never ask argent for a forced boot of an AVD that devslim manages: it
+   relaunches with `-gpu auto` and without `-memory`.
 
-Anuncio gRPC. O argent (simulator-server) descobre o emulador pelo arquivo
-`avd/running/pid_<pid>.ini` (no macOS em
-`~/Library/Caches/TemporaryItems/avd/running/`, no Linux em
-`$XDG_RUNTIME_DIR/avd/running/`) e exige `grpc.port` e `grpc.token` nele. Medido:
-o emulador lancado com `-port` e sem `-grpc` nao grava esse arquivo nem sobe o
-servidor gRPC, com janela ou sem, e `-grpc-use-token` sozinho nao resolve. Por
-isso o devslim lanca sempre com `-grpc <porta> -grpc-use-token`. A porta gRPC e
-por instancia: `8554 + (porta do console - 5554)`, ou seja 8554 para
-`emulator-5554`, 8556 para `emulator-5556`. Validado em 2026-11-16 com
-`qa-tablet-api35` em `-port 5554 -grpc 8554`: o `pid_<pid>.ini` saiu com
-`grpc.port=8554` e `grpc.token`, e `argent run screenshot --udid emulator-5554`
-funcionou. Tap e describe ainda nao foram conferidos um a um.
+gRPC advertisement. argent (simulator-server) discovers the emulator through the
+file `avd/running/pid_<pid>.ini` (on macOS in
+`~/Library/Caches/TemporaryItems/avd/running/`, on Linux in
+`$XDG_RUNTIME_DIR/avd/running/`) and requires `grpc.port` and `grpc.token` in
+it. Measured: an emulator launched with `-port` and without `-grpc` neither
+writes that file nor starts the gRPC server, with or without a window, and
+`-grpc-use-token` alone does not fix it. That is why devslim always launches
+with `-grpc <port> -grpc-use-token`. The gRPC port is per instance: `8554 +
+(console port - 5554)`, that is 8554 for `emulator-5554`, 8556 for
+`emulator-5556`. Validated on 2026-11-16 with `qa-tablet-api35` on `-port 5554
+-grpc 8554`: the `pid_<pid>.ini` came out with `grpc.port=8554` and
+`grpc.token`, and `argent run screenshot --udid emulator-5554` worked. Tap and
+describe have not been checked one by one yet.
 
-Depois do boot, o `up` procura a entrada do AVD (por `avd.name` e
-`port.serial`) por ate 10 s e devolve `advertised` e `grpcPort`. Sem entrada
-com porta e token, avisa em stderr que ferramentas que dependem de gRPC nao vao
-enxergar o emulador; adb funciona normalmente e o exit continua 0. O `status`
-e o `doctor` (`emulator-advertised`) mostram o mesmo. O `pid_<pid>.ini` pode
-sobrar de um emulador que morreu sem limpar (crash, kill -9). Por isso a
-entrada so conta quando o pid do nome do arquivo ainda existe (`kill -0`; sem
-permissao conta como vivo). Entrada de pid morto nao vale como anuncio no `up`,
-no `status` nem no `doctor`, que so informa quantas ignorou. O devslim nunca
-apaga esses arquivos: sao do emulador. `--no-grpc` em `plan`, `tune`, `up` e
-`bake` lanca sem as duas flags e nao avisa; o `tune` grava `grpc: false` no
-perfil. `--grpc` nos mesmos comandos religa sobre o perfil salvo (`tune --grpc`
-grava `grpc: true` de volta); sem nenhuma das duas, vale o que o tune salvou.
-As duas juntas sao erro de uso. State gravado antes deste campo vale como
-ligado.
+After boot, `up` looks for the AVD's entry (by `avd.name` and `port.serial`) for
+up to 10 s and returns `advertised` and `grpcPort`. Without an entry with port
+and token, it warns on stderr that tools that rely on gRPC will not see the
+emulator; adb works normally and the exit stays 0. `status` and `doctor`
+(`emulator-advertised`) show the same. A `pid_<pid>.ini` can be left over from
+an emulator that died without cleaning up (crash, kill -9). That is why an entry
+only counts when the pid in the file name still exists (`kill -0`; no
+permission counts as alive). A dead pid entry does not count as an
+advertisement in `up`, `status` or `doctor`, which only reports how many it
+ignored. devslim never deletes these files: they belong to the emulator.
+`--no-grpc` in `plan`, `tune`, `up` and `bake` launches without both flags and
+does not warn; `tune` saves `grpc: false` in the profile. `--grpc` in the same
+commands turns it back on over the saved profile (`tune --grpc` saves `grpc:
+true` again); with neither, whatever tune saved applies. Both together are a
+usage error. State saved before this field counts as on.
 
-Alternativa quando o argent precisa bootar sozinho: exporte
-`ARGENT_EMULATOR_GPU_MODE=host` no ambiente do tool-server dele. O `doctor`
-avisa quando falta (`argent-gpu`) e quando um emulador ja roda fora do perfil
-(`running-off-profile`). O `status` mostra `lancado por argent` e o `up` avisa
-se encontrar o AVD rodando assim.
+Alternative when argent needs to boot on its own: export
+`ARGENT_EMULATOR_GPU_MODE=host` in its tool-server environment. `doctor` warns
+when it is missing (`argent-gpu`) and when an emulator already runs outside the
+profile (`running-off-profile`). `status` shows `launched by argent` and `up`
+warns if it finds the AVD running that way.
 
-- O snapshot do devslim se chama `slim_base`. O `default_boot` e do emulador e do
-  argent, e o devslim nunca grava nele.
-- O devslim lanca com `-feature -Vulkan`, igual ao argent, para o probe de
-  snapshot do argent nao recusar e regravar `ram.bin`.
+- The devslim snapshot is called `slim_base`. `default_boot` belongs to the
+  emulator and to argent, and devslim never writes to it.
+- devslim launches with `-feature -Vulkan`, like argent, so that argent's
+  snapshot probe does not refuse and rewrite `ram.bin`.
 
-## Auto-desligar
+## Idle-down
 
-Um device esquecido custa de 1 a 5 GB de RAM. Com `--idle-down <dur>`, o `up`
-deixa um processo destacado que desliga o device quando ninguem usa:
+A forgotten device costs 1 to 5 GB of RAM. With `--idle-down <dur>`, `up`
+leaves a detached process that shuts the device down when nobody uses it:
 
 ```
 devslim android up slim-api35 --idle-down 30m
 devslim ios up QA-iPhone17 --idle-down 1h
 ```
 
-`<dur>` aceita `30m`, `90s`, `1h` ou um numero puro, lido como minutos. O minimo
-e 2 minutos; abaixo disso, ou em outro formato, e erro de uso antes de bootar.
-Vale so para `android up` e `ios up`, nunca fica salvo no perfil do `tune` e,
-sem a flag, nada muda.
+`<dur>` accepts `30m`, `90s`, `1h` or a bare number, read as minutes. The
+minimum is 2 minutes; below that, or in another format, it is a usage error
+before booting. It only applies to `android up` and `ios up`, is never saved in
+the `tune` profile and, without the flag, nothing changes.
 
-O `up` imprime uma linha `auto-desligar: apos <dur> sem app em uso (watcher
-pid <n>, log <caminho>)` e, no `--json`, ganha `idleDown: {ms, watcherPid,
-startedAt, logFile}`. O watcher e o processo `node bin/devslim _idle-watch
-<plataforma> <id> --idle-ms <n>` (subcomando interno, fora do `--help`), com
-stdout e stderr em `$DEVSLIM_HOME/logs/idle-<id>.log`; `<id>` e o nome do AVD
-no Android e o UDID no iOS. A sessao guarda `idleDown: {ms, watcherPid,
-startedAt}` na entrada do device. Um segundo `up --idle-down` do mesmo device
-termina o watcher anterior e sobe outro com a duracao nova.
+`up` prints a line `idle-down: after <dur> with no app in use (watcher pid <n>,
+log <path>)` and, with `--json`, gets `idleDown: {ms, watcherPid, startedAt,
+logFile}`. The watcher is the process `node bin/devslim _idle-watch <platform>
+<id> --idle-ms <n>` (internal subcommand, not in `--help`), with stdout and
+stderr in `$DEVSLIM_HOME/logs/idle-<id>.log`; `<id>` is the AVD name on Android
+and the UDID on iOS. The session keeps `idleDown: {ms, watcherPid, startedAt}`
+in the device entry. A second `up --idle-down` of the same device ends the
+previous watcher and starts another with the new duration.
 
-Parado quer dizer nenhum app de terceiro em uso. A cada 30 s o watcher olha:
+Idle means no third-party app in use. Every 30 s the watcher looks at:
 
-- Android: a linha `topResumedActivity=` (ou `ResumedActivity:`, grafia por
-  display e de versoes antigas) de `adb -s <serial> shell dumpsys activity
-  activities`. Pacote que comeca com `com.android.`, `com.google.android.` ou
-  `android` (launcher, Settings, apps do sistema) nao conta como uso, nem saida
-  vazia ou ilegivel enquanto o device responde ao adb. Qualquer outro pacote em
-  primeiro plano conta.
-- iOS: `xcrun simctl spawn <udid> launchctl list`. Uma entrada
-  `UIKitApplication:<bundle>` com bundle fora de `com.apple.` conta como uso.
+- Android: the `topResumedActivity=` line (or `ResumedActivity:`, the per-display
+  spelling and that of older versions) of `adb -s <serial> shell dumpsys activity
+  activities`. A package starting with `com.android.`, `com.google.android.` or
+  `android` (launcher, Settings, system apps) does not count as use, nor does
+  empty or unreadable output while the device answers adb. Any other package in
+  the foreground counts.
+- iOS: `xcrun simctl spawn <udid> launchctl list`. A
+  `UIKitApplication:<bundle>` entry with a bundle outside `com.apple.` counts as
+  use.
 
-Uso visto zera o relogio. Com a duracao inteira parado, o watcher confere de
-novo a sessao e desliga pelo mesmo caminho de `devslim android down <avd>` ou
-`devslim ios down <udid>` (a entrada sai da sessao do mesmo jeito), escreve no
-log uma linha com hora, device e quanto tempo ficou parado, e sai.
+Use seen resets the clock. After the whole duration idle, the watcher checks the
+session again and shuts down by the same path as `devslim android down <avd>`
+or `devslim ios down <udid>` (the entry leaves the session the same way),
+writes a log line with the time, device and how long it was idle, and exits.
 
-O watcher sai sem desligar nada quando:
+The watcher exits without shutting anything down when:
 
-- o device nao esta mais rodando (serial fora do `adb devices`, simulador fora
-  de `Booted`);
-- a entrada do device sumiu da sessao ou e de outro boot (pid ou `startedAt`
-  diferente do que havia quando o watcher subiu);
-- o registro `idleDown` da entrada nao tem mais o pid dele (um `down` ou um novo
-  `up --idle-down` tirou);
-- a sondagem falha 3 vezes seguidas (cada falha vai para o log).
+- the device is no longer running (serial missing from `adb devices`, simulator
+  not `Booted`);
+- the device entry is gone from the session or belongs to another boot (pid or
+  `startedAt` different from when the watcher started);
+- the entry's `idleDown` record no longer has its pid (a `down` or a new
+  `up --idle-down` removed it);
+- polling fails 3 times in a row (each failure goes to the log).
 
-Ele nunca desliga device que o devslim nao subiu: sem entrada na sessao, o `up
---idle-down` so avisa em stderr (`auto-desligar ignorado`) e nao lanca watcher.
-No iOS, um `up` que reboota o simulador para aplicar o perfil conta como boot
-do devslim; so o simulador ja bootado e enxuto fica de fora.
-`devslim down`, `devslim android down` e `devslim ios down` mandam SIGTERM ao
-watcher registrado antes de desligar o device e limpam o campo, mesmo quando o
-desligamento falha. Antes do sinal, o `down` confere com `ps -o command= -p
-<pid>` que o pid ainda e o watcher deste device; pid morto ou reaproveitado so
-tem o campo limpo.
+It never shuts down a device that devslim did not start: with no session entry,
+`up --idle-down` only warns on stderr (`idle-down ignored`) and does not launch
+a watcher. On iOS, an `up` that reboots the simulator to apply the profile counts
+as a devslim boot; only a simulator that was already booted and slim is left out.
+`devslim down`, `devslim android down` and `devslim ios down` send SIGTERM to the
+registered watcher before shutting the device down and clear the field, even
+when the shutdown fails. Before the signal, `down` checks with `ps -o command=
+-p <pid>` that the pid is still this device's watcher; a dead or reused pid only
+gets the field cleared.
 
-`status` mostra `auto-desligar em <dur>` na linha da sessao e se o pid do
-watcher vive. O `doctor` (`stale-session`) avisa quando o watcher morreu com o
-device ainda rodando: o device nao vai mais desligar sozinho, e o motivo esta no
-log `idle-<id>.log`.
+`status` shows `idle-down after <dur>` on the session line and whether the
+watcher pid is alive. `doctor` (`stale-session`) warns when the watcher died with
+the device still running: the device will no longer shut down on its own, and
+the reason is in the log `idle-<id>.log`.
 
-Limite: o criterio e app de terceiro em primeiro plano, nao atividade em geral.
-Um device usado so por adb ou pelo argent sem app de terceiro aberto (por
-exemplo parado na home durante um build longo, antes do `install`) conta como
-parado e desliga quando a duracao vence. Escolha uma duracao maior que o build,
-ou suba sem `--idle-down`.
+Limit: the criterion is a third-party app in the foreground, not activity in
+general. A device used only through adb or argent with no third-party app open
+(for example sitting on the home screen during a long build, before the
+`install`) counts as idle and shuts down when the duration runs out. Pick a
+duration longer than the build, or start without `--idle-down`.
 
-## Uso como lib
+## Using as a library
 
-`src/index.ts` exporta tudo que a CLI usa. Todo processo passa por um `Exec`
-injetavel, e os testes usam `createFakeExec`, `createFakeAndroid` e
+`src/index.ts` exports everything the CLI uses. Every process goes through an
+injectable `Exec`, and the tests use `createFakeExec`, `createFakeAndroid` and
 `createFakeIos`.
 
 ```ts
 import { collectStatus, runDoctor, doctorExitCode } from 'devslim';
 
 const status = await collectStatus();
-if ((status.swap.percent ?? 0) > 80) console.warn('swap alto, nao suba device');
+if ((status.swap.percent ?? 0) > 80) console.warn('swap is high, do not start a device');
 const checks = await runDoctor();
 process.exitCode = doctorExitCode(checks);
 ```
@@ -527,135 +545,136 @@ const m = await measureAvd('slim-api35');
 console.log(up.serial, m.host.footprintMb);
 ```
 
-## Limites conhecidos
+## Known limits
 
-- Um device por vez. `up` e `bake` recusam se ja houver emulador ou simulador
-  rodando, ou se o swap passar de 95%, salvo `--force`.
-- iOS so a partir de 18.5. Antes disso o launchd_sim nao guarda os overrides
-  entre boots. tvOS, watchOS e visionOS ficam fora.
-- O `disabled.plist` e detalhe interno do CoreSimulator. Por isso o `up` sempre
-  confere depois do boot e o `status` aponta drift.
-- Nao verificado ainda se a limpeza periodica do macOS alcanca
+- One device at a time. `up` and `bake` refuse if an emulator or simulator is
+  already running, or if swap exceeds 95%, unless `--force`.
+- iOS 18.5 and later only. Before that, launchd_sim does not keep the overrides
+  across boots. tvOS, watchOS and visionOS are out.
+- `disabled.plist` is a CoreSimulator internal detail. That is why `up` always
+  verifies after boot and `status` reports drift.
+- Not yet verified whether the periodic macOS cleanup reaches
   `/private/var/tmp`.
-- `down` so conhece o que esta registrado na sessao, salvo `--force`.
-- O auto-desligar so enxerga app de terceiro em primeiro plano: device parado na
-  home durante um build longo conta como parado (ver "Auto-desligar").
-- A lista de pacotes Android veio do avdslim e o `bake` cruza cada um com
-  `pm list packages` antes de desligar. Imagem diferente pode ter nomes que a
-  lista nao cobre.
-- Nada de GUI, CI, device fisico, clone de device ou limpeza de disco. O `doctor`
-  relata imagem orfa e snapshot grande, mas nao apaga.
+- `down` only knows what is registered in the session, unless `--force`.
+- Idle-down only sees a third-party app in the foreground: a device sitting on
+  the home screen during a long build counts as idle (see "Idle-down").
+- The Android package list came from avdslim and `bake` checks each one against
+  `pm list packages` before disabling it. A different image may have names the
+  list does not cover.
+- No GUI, CI, physical device, device cloning or disk cleanup. `doctor` reports
+  orphan images and large snapshots, but does not delete them.
 
-## Numeros medidos
+## Measured numbers
 
-Medido em 2026-11-17 num Mac Apple Silicon, uma medicao por linha, 2 min
-parado depois do boot, sem app aberto.
+Measured on 2026-11-17 on an Apple Silicon Mac, one measurement per row, 2 min
+idle after boot, no app open.
 
 Android, API 35 arm64, pixel_7:
 
-| perfil | RAM efetiva | phys_footprint do qemu no host | processos no guest |
+| profile | effective RAM | qemu phys_footprint on the host | guest processes |
 |---|---|---|---|
-| `google_apis` sem devslim, headless, `-gpu auto` (caiu em lavapipe) | 2560 MB | 5525 MB | 341 |
-| devslim padrao (pede 2048), tela original | 2560 MB | 4590 MB | 325 |
-| devslim padrao, tela 720x1600@320 | 2560 MB | 4343 MB | 313 |
-| devslim `--ram 1536`, sem lowram | 2560 MB (elevada) | 4469 MB | 311 |
-| devslim `--aggressive` (1536 e `-lowram`) | 1536 MB | 3444 MB | 290 |
-| devslim padrao em imagem `aosp_atd` | 2560 MB | 3660 MB | 262 |
-| devslim padrao em imagem `google_atd` | 2560 MB | 4687 MB | 277 |
-| devslim padrao em imagem `aosp_atd` API 30 | 2048 MB | 2398 MB | 223 |
-| devslim `--aggressive` em imagem `aosp_atd` API 35 | 1536 MB | 2502 MB | 307 |
+| `google_apis` without devslim, headless, `-gpu auto` (fell back to lavapipe) | 2560 MB | 5525 MB | 341 |
+| devslim default (requests 2048), original screen | 2560 MB | 4590 MB | 325 |
+| devslim default, 720x1600@320 screen | 2560 MB | 4343 MB | 313 |
+| devslim `--ram 1536`, without lowram | 2560 MB (raised) | 4469 MB | 311 |
+| devslim `--aggressive` (1536 and `-lowram`) | 1536 MB | 3444 MB | 290 |
+| devslim default on an `aosp_atd` image | 2560 MB | 3660 MB | 262 |
+| devslim default on a `google_atd` image | 2560 MB | 4687 MB | 277 |
+| devslim default on an `aosp_atd` API 30 image | 2048 MB | 2398 MB | 223 |
+| devslim `--aggressive` on an `aosp_atd` API 35 image | 1536 MB | 2502 MB | 307 |
 
-O que as linhas mostram:
+What the rows show:
 
-- O emulador eleva qualquer `-memory` abaixo do piso dele (2560 MB neste phone;
-  4096 MB visto num tablet 2560x1600), a menos que o `-lowram` esteja ligado.
-  `--ram 2048` e `--ram 1536` sozinhos nao valem.
-- Tela menor nao baixa o piso: a RAM efetiva ficou em 2560 MB.
-- Imagem sem servicos Google economiza mais ou menos o mesmo que o lowram.
-- `google_atd` (servicos Google reduzidos) nao rendeu no host: ficou na faixa
-  do `google_apis` enxuto, embora o guest usasse menos RAM (760 MB).
-- `aosp_atd` API 30 foi a linha mais leve: o emulador respeitou 2048 MB sem
-  lowram (o piso de 2560 MB e da API 35) e o host ficou em 2398 MB. Serve para
-  teste de UI e logica quando o `minSdk` do app aceita API 30; nao valida
-  comportamento de Android 15.
-- Na API 35, `aosp_atd` com `--aggressive` chegou perto disso (2502 MB), com
-  a RAM do guest apertada (744 MB disponiveis). E a opcao mais leve que ainda
-  roda Android 15.
-- No guest, o Google Play Services usou 391 MB de PSS e o Gboard
+- The emulator raises any `-memory` below its floor (2560 MB on this phone;
+  4096 MB seen on a 2560x1600 tablet), unless `-lowram` is on. `--ram 2048` and
+  `--ram 1536` on their own do not stick.
+- A smaller screen does not lower the floor: effective RAM stayed at 2560 MB.
+- An image without Google services saves roughly the same as lowram.
+- `google_atd` (reduced Google services) did not pay off on the host: it stayed
+  in the range of the slimmed `google_apis`, although the guest used less RAM
+  (760 MB).
+- `aosp_atd` API 30 was the lightest row: the emulator honored 2048 MB without
+  lowram (the 2560 MB floor is API 35's) and the host stayed at 2398 MB. It
+  works for UI and logic tests when the app's `minSdk` allows API 30; it does
+  not validate Android 15 behavior.
+- On API 35, `aosp_atd` with `--aggressive` came close to that (2502 MB), with
+  tight guest RAM (744 MB available). It is the lightest option that still runs
+  Android 15.
+- In the guest, Google Play Services used 391 MB of PSS and Gboard
   (`com.google.android.inputmethod.latin`) 81 MB.
 
 iOS, iPhone 17, iOS 26.4:
 
-| perfil | processos | memoria |
+| profile | processes | memory |
 |---|---|---|
-| sem devslim | 279 | 4629 MB |
-| devslim padrao (boot 3.4 s) | 67 | 953 MB |
+| without devslim | 279 | 4629 MB |
+| devslim default (boot 3.4 s) | 67 | 953 MB |
 
-Comparacao direta com o simslim 0.11.0 (Homebrew), iPhone 17, iOS 26.4,
-simulador novo para cada ferramenta, duas rodadas alternadas, 2 min parado:
+Direct comparison with simslim 0.11.0 (Homebrew), iPhone 17, iOS 26.4, a fresh
+simulator for each tool, two alternating rounds, 2 min idle:
 
-| ferramenta | 1o boot | 2o boot | labels desligados no system |
+| tool | 1st boot | 2nd boot | labels disabled in system |
 |---|---|---|---|
-| simslim, rodada 1 | 92 proc, 2867 MB | 71 proc, 2800 MB | 171 |
-| devslim, rodada 1 | 76 proc, 1206 MB | 65 proc, 976 MB | 174 |
-| simslim, rodada 2 | 90 proc, 2447 MB | 70 proc, 2659 MB | 171 |
-| devslim, rodada 2 | 76 proc, 1114 MB | 64 proc, 967 MB | 174 |
+| simslim, round 1 | 92 proc, 2867 MB | 71 proc, 2800 MB | 171 |
+| devslim, round 1 | 76 proc, 1206 MB | 65 proc, 976 MB | 174 |
+| simslim, round 2 | 90 proc, 2447 MB | 70 proc, 2659 MB | 171 |
+| devslim, round 2 | 76 proc, 1114 MB | 64 proc, 967 MB | 174 |
 
-A diferenca vem quase toda do Spotlight: 1533 MB no simulador do simslim contra
-68 MB no do devslim; o resto da lista de processos e parecido. O devslim desliga
-5 labels que o simslim 0.11.0 deixa ligados (`ClipServices.clipserviced`,
-`RemoteManagementAgent`, `accessibility.axassetsd`, `managedassetsd`,
-`remotemanagementd`). Qual deles segura o Spotlight nao foi isolado.
+The difference comes almost entirely from Spotlight: 1533 MB in the simslim
+simulator versus 68 MB in the devslim one; the rest of the process list is
+similar. devslim disables 5 labels that simslim 0.11.0 leaves enabled
+(`ClipServices.clipserviced`, `RemoteManagementAgent`,
+`accessibility.axassetsd`, `managedassetsd`, `remotemanagementd`). Which of them
+holds Spotlight up has not been isolated.
 
-Outras medicoes do mesmo dia, devslim, 2 min parado:
+Other measurements from the same day, devslim, 2 min idle:
 
-- iOS 18.6, iPhone 16: 248 processos e 4705 MB sem devslim; 71 e 1136 MB com.
-  Versao mais antiga nao rende mais que a 26.4.
-- iPhone 17, 17e e SE 3 no 26.4 ficaram entre 1082 e 1192 MB no primeiro boot:
-  tamanho de tela nao muda o resultado.
-- O primeiro boot de um simulador novo custa uns 150 MB e uns 13 s a mais que
-  os seguintes.
-- Desligar daemons extras no dominio `user/foreground` nao funciona: 11 de 13
-  voltaram depois do reboot.
+- iOS 18.6, iPhone 16: 248 processes and 4705 MB without devslim; 71 and 1136
+  MB with it. The older version does not gain more than 26.4.
+- iPhone 17, 17e and SE 3 on 26.4 landed between 1082 and 1192 MB on first
+  boot: screen size does not change the result.
+- The first boot of a fresh simulator costs about 150 MB and about 13 s more
+  than the following ones.
+- Disabling extra daemons in the `user/foreground` domain does not work: 11 of
+  13 came back after the reboot.
 
-Ressalvas:
+Caveats:
 
-- Uma medicao por linha, sem app aberto.
-- A base do Android rodou headless. A base do iOS foi o primeiro boot de um
-  simulador recem criado.
-- O `footprint` reporta dois numeros para o qemu: o cabecalho e o
-  `phys_footprint`. As tabelas usam o `phys_footprint`, que nesse processo
-  diverge do cabecalho; compare as linhas entre si em vez de ler os valores
-  absolutos.
+- One measurement per row, no app open.
+- The Android baseline ran headless. The iOS baseline was the first boot of a
+  freshly created simulator.
+- `footprint` reports two numbers for qemu: the header and `phys_footprint`.
+  The tables use `phys_footprint`, which for this process diverges from the
+  header; compare the rows with each other instead of reading the absolute
+  values.
 
-Uso real no iOS (2026-11-17, perfil enxuto, iOS 26.4, iPhone 17 e iPad Pro 13,
-build release de simulador com bundle embutido): boot em cerca de 6,6 s, app
-instalado, login, mapa, busca, rota e chamadas de API funcionaram. Efeito
-colateral visto: um alerta "Poor Internet Connection" no primeiro launch, uma
-vez; depois a rede funcionou. Ainda nao conferido: app Expo em dev build
-conectando no Metro.
+Real use on iOS (2026-11-17, slim profile, iOS 26.4, iPhone 17 and iPad Pro 13,
+release simulator build with an embedded bundle): boot in about 6.6 s; app
+install, sign-in, map, search, route and API calls worked. Side effect seen: a
+"Poor Internet Connection" alert on first launch, once; after that the network
+worked. Not yet checked: an Expo app in a dev build connecting to Metro.
 
-Medicao anterior, em outras condicoes (2026-11-16, bench-api35, pixel_7
-1080x2400, API 35 google_apis, tunado, sem bake, app de mapa aberto, ~30 min de
-uso): phys_footprint 5582 MB, cabecalho do footprint 3000 MB, RSS 4034 MB, guest
-MemTotal 2473 MB, 288 processos no guest; o emulador elevou a RAM de 2048 para
-2560 MB.
+Earlier measurement, under other conditions (2026-11-16, bench-api35, pixel_7
+1080x2400, API 35 google_apis, tuned, no bake, map app open, ~30 min of use):
+phys_footprint 5582 MB, footprint header 3000 MB, RSS 4034 MB, guest MemTotal
+2473 MB, 288 processes in the guest; the emulator raised RAM from 2048 to 2560
+MB.
 
-## Testes
+## Tests
 
 ```
 node --test --test-concurrency=2
 ```
 
-Os testes usam AVDs, SDK e store iOS em diretorio temporario, com exec, spawn,
-relogio e sleep falsos. Nenhum chama adb, emulator, avdmanager ou simctl de
-verdade, nem escreve em `~/.android` ou `/private/var/tmp`.
+The tests use AVDs, SDK and iOS store in a temporary directory, with fake exec,
+spawn, clock and sleep. None of them calls the real adb, emulator, avdmanager or
+simctl, nor writes to `~/.android` or `/private/var/tmp`.
 
-## Licenca
+## License
 
-MIT. Ver `LICENSE`.
+MIT. See `LICENSE`.
 
-## Licenca de terceiros
+## Third-party licenses
 
-A lista de pacotes Android deriva do avdslim (MIT). Labels e categorias iOS
-derivam do simslim (MIT). Ver `NOTICE`.
+The Android package list derives from avdslim (MIT). iOS labels and categories
+derive from simslim (MIT). See `NOTICE`.

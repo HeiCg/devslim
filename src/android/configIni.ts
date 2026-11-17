@@ -1,16 +1,16 @@
 import { hasCapability, type AndroidProfile } from './profile.ts';
 
-// Documento ini que preserva cada byte: linhas nao tocadas sao reemitidas a
-// partir de `raw` + `eol` originais. Chave alterada so reescreve o valor,
-// mantendo o separador (`k=v` ou `k = v`) e o espaco final da linha.
+// Ini document that preserves every byte: untouched lines are re-emitted from
+// the original `raw` + `eol`. A changed key only rewrites the value,
+// keeping the separator (`k=v` or `k = v`) and the trailing whitespace.
 export type IniEntry = Readonly<{
   kind: 'entry';
   raw: string;
   eol: string;
   key: string;
   value: string;
-  prefix: string; // tudo antes do valor: espaco inicial, chave, separador
-  suffix: string; // espaco depois do valor
+  prefix: string; // everything before the value: leading whitespace, key, separator
+  suffix: string; // whitespace after the value
 }>;
 export type IniOther = Readonly<{ kind: 'other'; raw: string; eol: string }>;
 export type IniLine = IniEntry | IniOther;
@@ -58,7 +58,7 @@ export function serializeIni(doc: IniDoc): string {
   return out;
 }
 
-// Valor efetivo de uma chave (a ultima ocorrencia vence).
+// Effective value of a key (the last occurrence wins).
 export function getValue(doc: IniDoc, key: string): string | undefined {
   for (let i = doc.lines.length - 1; i >= 0; i--) {
     const l = doc.lines[i];
@@ -78,8 +78,8 @@ function dominantEol(doc: IniDoc): string {
   return '\n';
 }
 
-// Novo doc com `key=value`. Atualiza toda ocorrencia existente; se a chave nao
-// existe, acrescenta no fim respeitando o estilo de fim de linha do arquivo.
+// New doc with `key=value`. Updates every existing occurrence; if the key does not
+// exist, appends it at the end following the file line-ending style.
 export function setValue(doc: IniDoc, key: string, value: string): IniDoc {
   let found = false;
   let changed = false;
@@ -98,7 +98,7 @@ export function setValue(doc: IniDoc, key: string, value: string): IniDoc {
   if (last === undefined) {
     lines.push(parseLine(raw, ''));
   } else if (last.eol === '') {
-    // Arquivo sem newline final: a linha nova vira a ultima, tambem sem newline.
+    // File without a trailing newline: the new line becomes the last one, also without a newline.
     lines[lines.length - 1] = Object.freeze({ ...last, eol });
     lines.push(parseLine(raw, ''));
   } else {
@@ -107,7 +107,7 @@ export function setValue(doc: IniDoc, key: string, value: string): IniDoc {
   return Object.freeze({ bom: doc.bom, lines: Object.freeze(lines) });
 }
 
-// Valores canonicos das chaves geridas, na ordem em que sao aplicadas.
+// Canonical values of the managed keys, in the order they are applied.
 export function managedValues(doc: IniDoc, profile: AndroidProfile): Array<[string, string]> {
   const audio = hasCapability(profile, 'audio') ? 'yes' : 'no';
   const camera = hasCapability(profile, 'camera') ? 'emulated' : 'none';
@@ -133,8 +133,8 @@ export function managedValues(doc: IniDoc, profile: AndroidProfile): Array<[stri
       ['hw.lcd.density', String(profile.screen.density)],
     );
   }
-  // Sensores: so os que ja existem no arquivo. orientation fica como esta
-  // (hw.accelerometer nao e hw.sensors.*, entao tambem nao e tocado).
+  // Sensors: only the ones already in the file. orientation stays as is
+  // (hw.accelerometer is not hw.sensors.*, so it is not touched either).
   for (const key of entryKeys(doc)) {
     if (key.startsWith('hw.sensors.') && key !== 'hw.sensors.orientation') pairs.push([key, 'no']);
   }

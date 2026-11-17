@@ -25,7 +25,7 @@ import {
 } from '../src/measure.ts';
 import { createFakeIos } from '../src/ios/fakeIos.ts';
 
-// Layout real do `footprint -p` no macOS 26.6 (capturado de um zsh), com numeros de qemu.
+// Real layout of `footprint -p` on macOS 26.6 (captured from a zsh), with qemu numbers.
 const FOOTPRINT_QEMU = `======================================================================
 qemu-system-aarch64 [51234]: 64-bit    Footprint: 2690 MB (16384 bytes per page)
 ======================================================================
@@ -86,7 +86,7 @@ DMA-BUF:    45,676K (    9,012K mapped +    36,664K unmapped)
    Tuning: 256 (large 512), oom   322,560K, restore limit   107,520K (high-end-gfx)
 `;
 
-test('parseFootprintMb: phys_footprint em GB, KB e MB; cai no cabecalho sem a linha', () => {
+test('parseFootprintMb: phys_footprint in GB, KB and MB; falls back to the header without the line', () => {
   assert.equal(parseFootprintMb(FOOTPRINT_QEMU), 2662.4);
   assert.equal(parseFootprintMb(FOOTPRINT_ZSH), 2.2);
   assert.equal(parseFootprintMb('    phys_footprint: 1234 MB\n    phys_footprint_peak: 1500 MB\n'), 1234);
@@ -94,8 +94,8 @@ test('parseFootprintMb: phys_footprint em GB, KB e MB; cai no cabecalho sem a li
   assert.equal(parseFootprintMb('footprint: no process found'), null);
 });
 
-// Uso real (2026-11-16, bench-api35, pid 73808). Literais: a linha de cabecalho
-// e a linha phys_footprint; a tabela do meio foi omitida (nao capturada).
+// Real use (2026-11-16, bench-api35, pid 73808). Literals: the header line
+// and the phys_footprint line; the table in between was omitted (not captured).
 const FOOTPRINT_REAL_73808 = `======================================================================
 qemu-system-aarch64-headless [73808]: 64-bit    Footprint: 3000 MB (16384 bytes per page)
 ======================================================================
@@ -103,9 +103,9 @@ qemu-system-aarch64-headless [73808]: 64-bit    Footprint: 3000 MB (16384 bytes 
 Auxiliary data:
     phys_footprint: 5582 MB
 `;
-const PS_RSS_REAL_73808 = '4137840\n'; // `ps -o rss= -p 73808`, em KB
+const PS_RSS_REAL_73808 = '4137840\n'; // `ps -o rss= -p 73808`, in KB
 
-test('fixture real: phys_footprint 5582, cabecalho 3000, RSS 4137840 KB = 4040.9 MB', async () => {
+test('real fixture: phys_footprint 5582, header 3000, RSS 4137840 KB = 4040.9 MB', async () => {
   assert.equal(parsePhysFootprintMb(FOOTPRINT_REAL_73808), 5582);
   assert.equal(parseFootprintHeaderMb(FOOTPRINT_REAL_73808), 3000);
   assert.equal(parseRssMb(PS_RSS_REAL_73808), 4040.9); // 4137840 / 1024 = 4040.86
@@ -113,49 +113,49 @@ test('fixture real: phys_footprint 5582, cabecalho 3000, RSS 4137840 KB = 4040.9
   assert.deepEqual(await measureAndroidHost(73808, { exec: fake.exec }), { footprintMb: 5582, footprintHeaderMb: 3000, rssMb: 4040.9 });
 });
 
-test('footprint: KB/MB/GB nos dois campos; cada um null quando falta a sua linha', () => {
+test('footprint: KB/MB/GB in both fields; each null when its line is missing', () => {
   assert.equal(parsePhysFootprintMb('    phys_footprint: 2.5 GB\n'), 2560);
   assert.equal(parsePhysFootprintMb('    phys_footprint: 2048 KB\n'), 2);
   assert.equal(parseFootprintHeaderMb('x [1]: 64-bit    Footprint: 1.5 GB (16384 bytes per page)\n'), 1536);
   assert.equal(parseFootprintHeaderMb('zsh [4964]: 64-bit    Footprint: 2272 KB (16384 bytes per page)\n'), 2.2);
   assert.equal(parseFootprintHeaderMb(FOOTPRINT_QEMU), 2690);
-  // So cabecalho: phys null (sem cair no cabecalho); so phys: cabecalho null.
+  // Header only: phys null (no fallback to the header); phys only: header null.
   assert.equal(parsePhysFootprintMb('x [1]: 64-bit    Footprint: 2690 MB (16384 bytes per page)\n'), null);
   assert.equal(parseFootprintHeaderMb('    phys_footprint: 1234 MB\n    phys_footprint_peak: 1500 MB\n'), null);
   assert.equal(parseFootprintHeaderMb('footprint: no process found'), null);
 });
 
-test('measureAndroidHost: so cabecalho no footprint = footprintMb null, footprintHeaderMb preenchido', async () => {
+test('measureAndroidHost: header only in footprint = footprintMb null, footprintHeaderMb filled', async () => {
   const fake = createFakeAndroid({ host: { footprint: 'x [1]: 64-bit    Footprint: 3000 MB (16384 bytes per page)\n', rss: null } });
   assert.deepEqual(await measureAndroidHost(1, { exec: fake.exec }), { footprintMb: null, footprintHeaderMb: 3000, rssMb: null });
 });
 
-test('parseRssMb: KB inteiro', () => {
+test('parseRssMb: integer KB', () => {
   assert.equal(parseRssMb('  2754560\n'), 2690);
   assert.equal(parseRssMb(''), null);
 });
 
 test('parseProcMeminfo, countPsProcesses, parseDumpsysMeminfo', () => {
   assert.deepEqual(parseProcMeminfo(PROC_MEMINFO), { memTotalMb: 1967.2, memAvailableMb: 1036.6 });
-  assert.deepEqual(parseProcMeminfo('lixo'), { memTotalMb: null, memAvailableMb: null });
+  assert.deepEqual(parseProcMeminfo('garbage'), { memTotalMb: null, memAvailableMb: null });
   assert.equal(countPsProcesses(PS_A), 4);
   assert.equal(countPsProcesses(''), null);
-  assert.equal(countPsProcesses('erro: sem permissao\n'), null);
+  assert.equal(countPsProcesses('error: permission denied\n'), null);
   assert.deepEqual(parseDumpsysMeminfo(DUMPSYS_TAIL), { usedRamMb: 851.4, freeRamMb: 1036.6 });
   assert.deepEqual(parseDumpsysMeminfo('Applications Memory Usage (in Kilobytes):\n'), { usedRamMb: null, freeRamMb: null });
 });
 
-test('measureAndroidHost: footprint + ps; qualquer falha vira null', async () => {
+test('measureAndroidHost: footprint + ps; any failure becomes null', async () => {
   const ok = createFakeAndroid({ host: { footprint: FOOTPRINT_QEMU, rss: '2754560\n' } });
   assert.deepEqual(await measureAndroidHost(51234, { exec: ok.exec }), { footprintMb: 2662.4, footprintHeaderMb: 2690, rssMb: 2690 });
   assert.deepEqual(ok.exec.calls.map((c) => [c.cmd, ...c.args]), [['footprint', '-p', '51234'], ['ps', '-o', 'rss=', '-p', '51234']]);
   const bad = createFakeAndroid({});
   assert.deepEqual(await measureAndroidHost(1, { exec: bad.exec }), { footprintMb: null, footprintHeaderMb: null, rssMb: null });
-  const throwing = async () => { throw new Error('footprint: comando nao encontrado'); };
+  const throwing = async () => { throw new Error('footprint: command not found'); };
   assert.deepEqual(await measureAndroidHost(1, { exec: throwing }), { footprintMb: null, footprintHeaderMb: null, rssMb: null });
 });
 
-test('measureAndroidGuest: meminfo, ps -A, dumpsys; falhas viram null', async () => {
+test('measureAndroidGuest: meminfo, ps -A, dumpsys; failures become null', async () => {
   const fake = createFakeAndroid({ emulators: [{ avd: 'a', port: 5554 }], guest: { meminfo: PROC_MEMINFO, ps: PS_A, dumpsys: DUMPSYS_TAIL } });
   const adb = createAdb({ adbPath: fake.tools.adb, exec: fake.exec });
   assert.deepEqual(await measureAndroidGuest('emulator-5554', { adb }), {
@@ -170,7 +170,7 @@ test('measureAndroidGuest: meminfo, ps -A, dumpsys; falhas viram null', async ()
   });
 });
 
-test('findQemuPid: pgrep -f com o nome do AVD; fallback para o pid da sessao', async () => {
+test('findQemuPid: pgrep -f with the AVD name; falls back to the session pid', async () => {
   const hit = createFakeAndroid({ host: { pgrep: '51234\n' } });
   assert.equal(await findQemuPid('slim-api35', { exec: hit.exec, sessionPid: 9 }), 51234);
   assert.deepEqual(hit.exec.calls[0].args, ['-f', 'qemu-system.*-avd slim-api35( |$)']);
@@ -192,7 +192,7 @@ function ctxFor(opts: FakeAndroidOptions) {
   return { fake, env, ctx: { env, exec: fake.exec, fileExists: fake.fileExists, date: fake.date } };
 }
 
-test('measureAvd: objeto estavel; pid da sessao quando pgrep nao acha', async () => {
+test('measureAvd: stable object; session pid when pgrep finds nothing', async () => {
   const { ctx, env } = ctxFor({
     emulators: [{ avd: 'slim-api35', port: 5556 }],
     host: { footprint: FOOTPRINT_QEMU, rss: '2754560\n' },
@@ -211,7 +211,7 @@ test('measureAvd: objeto estavel; pid da sessao quando pgrep nao acha', async ()
   });
 });
 
-test('measureAvd: sem pid conhecido, host vira null; AVD parado da erro', async () => {
+test('measureAvd: without a known pid, host becomes null; stopped AVD errors', async () => {
   const { ctx } = ctxFor({ emulators: [{ avd: 'slim-api35', port: 5554 }] });
   const m = await measureAvd('slim-api35', ctx);
   assert.equal(m.pid, null);
@@ -219,13 +219,13 @@ test('measureAvd: sem pid conhecido, host vira null; AVD parado da erro', async 
   assert.deepEqual(m.guest, { memTotalMb: null, memAvailableMb: null, processes: null, usedRamMb: null, freeRamMb: null });
 
   const off = ctxFor({});
-  await assert.rejects(measureAvd('slim-api35', off.ctx), /nao esta rodando/);
+  await assert.rejects(measureAvd('slim-api35', off.ctx), /is not running/);
 });
 
 // ---------------------------------------------------------------------------
 // iOS
 
-// Layout real do `top -l 1 -stats pid,mem` no macOS 26.6, com pids da arvore abaixo.
+// Real layout of `top -l 1 -stats pid,mem` on macOS 26.6, with pids from the tree below.
 const TOP_IOS = `Processes: 512 total, 5 running, 507 sleeping, 3867 threads
 2026/11/16 10:40:53
 Load Avg: 4.71, 5.28, 5.52
@@ -241,40 +241,40 @@ PID    MEM
 900    300M
 `;
 
-// 700 = launchd_sim do device; 701..703 filhos; 704 neto; 705 orfao (pai 1);
-// 900 e outro processo do host. 702 tem espaco no caminho.
+// 700 = device launchd_sim; 701..703 children; 704 grandchild; 705 orphan (parent 1);
+// 900 is another host process. 702 has a space in its path.
 const PS_IOS = `  PID  PPID  %CPU COMM
     1     0   0.2 /sbin/launchd
   700     1   0.5 /Library/Developer/CoreSimulator/launchd_sim
   701   700   1.5 /Library/Developer/CoreSimulator/Volumes/iOS_23E244/RuntimeRoot/usr/libexec/backboardd
   702   700  10.0 /Library/Developer/CoreSimulator/Volumes/iOS 26.4/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard
   703   700   0,5 /usr/libexec/assetsd
-  704   701   0.1 /usr/libexec/neto
-  705     1   9.9 /usr/libexec/orfao
-  900     1  50.0 /Applications/Outro.app/Contents/MacOS/Outro
+  704   701   0.1 /usr/libexec/grandchild
+  705     1   9.9 /usr/libexec/orphan
+  900     1  50.0 /Applications/Other.app/Contents/MacOS/Other
 `;
 
 const SIM_UDID = 'DBF8B093-58A2-4B57-812A-60D6CF8594BD';
 
-test('parseTopMem: sufixos B/K/M/G e +/- do top; cabecalho ignorado', () => {
+test('parseTopMem: B/K/M/G suffixes and top +/-; header ignored', () => {
   const m = parseTopMem(TOP_IOS);
   assert.equal(m.get(700), 2);
   assert.equal(m.get(701), 198);
   assert.equal(m.get(702), 1536);
   assert.equal(m.get(704), 512 / (1024 * 1024));
   assert.equal(m.size, 7);
-  assert.equal(parseTopMem('PID    MEM\nlixo\n').size, 0);
+  assert.equal(parseTopMem('PID    MEM\ngarbage\n').size, 0);
 });
 
-test('parsePsTable + processTree: arvore a partir do launchd_sim, orfaos ignorados', () => {
+test('parsePsTable + processTree: tree from launchd_sim, orphans ignored', () => {
   const t = parsePsTable(PS_IOS);
   assert.equal(t.get(702)!.comm, '/Library/Developer/CoreSimulator/Volumes/iOS 26.4/RuntimeRoot/System/Library/CoreServices/SpringBoard.app/SpringBoard');
   assert.equal(t.get(703)!.cpu, 0.5, 'virgula decimal');
   assert.deepEqual(processTree(700, t), [700, 701, 702, 703, 704]);
-  assert.deepEqual(processTree(12345, t), [12345], 'raiz sem filhos');
+  assert.deepEqual(processTree(12345, t), [12345], 'root without children');
 });
 
-test('measureSim: soma footprint e cpu da arvore; objeto estavel', async () => {
+test('measureSim: sums tree footprint and cpu; stable object', async () => {
   const fake = createFakeIos({
     storeBase: root,
     simulators: [{ udid: SIM_UDID, name: 'QA-iPhone17', state: 'Booted' }],
@@ -295,9 +295,9 @@ test('measureSim: soma footprint e cpu da arvore; objeto estavel', async () => {
   assert.deepEqual(fake.calls.find((c) => c.cmd === 'top')!.args, ['-l', '1', '-stats', 'pid,mem']);
 });
 
-test('measureSim: device nao bootado ou sem launchd_sim = erro claro', async () => {
+test('measureSim: device not booted or without launchd_sim = clear error', async () => {
   const off = createFakeIos({ storeBase: root, simulators: [{ udid: SIM_UDID, name: 'QA-iPhone17' }] });
-  await assert.rejects(measureSim(SIM_UDID, { exec: off.exec, env: {} }), /nao esta bootado \(estado Shutdown\)/);
+  await assert.rejects(measureSim(SIM_UDID, { exec: off.exec, env: {} }), /is not booted \(state Shutdown\)/);
   const nopid = createFakeIos({ storeBase: root, simulators: [{ udid: SIM_UDID, name: 'QA-iPhone17', state: 'Booted' }] });
-  await assert.rejects(measureSim(SIM_UDID, { exec: nopid.exec, env: {} }), /launchd_sim de QA-iPhone17 .* nao encontrado/);
+  await assert.rejects(measureSim(SIM_UDID, { exec: nopid.exec, env: {} }), /launchd_sim of QA-iPhone17 .* not found/);
 });

@@ -16,12 +16,12 @@ import { listStates, loadState, requestedRamMb, type AndroidState, type IosProfi
 import type { Capability } from './capabilities.ts';
 import { NO_SWAP_FILE_TEXT, readSwap, type SwapStatus } from './swap.ts';
 
-// `devslim status`: somente leitura. Nunca chama adb (subiria o daemon) nem
-// escreve nada; emulador rodando = lock no .avd ou `pgrep` do qemu. Quem
-// lancou cada emulador sai da linha de comando do qemu (pgrep -fl / ps).
+// `devslim status`: read-only. Never calls adb (it would start the daemon) and
+// never writes anything; running emulator = lock in the .avd or qemu `pgrep`. Who
+// launched each emulator comes from the qemu command line (pgrep -fl / ps).
 
 // ---------------------------------------------------------------------------
-// Liveness sem adb (usada tambem por doctor, down e measure de topo).
+// Liveness without adb (also used by doctor, top-level down and measure).
 
 export type AvdLiveness = Readonly<{ dir: string | null; lock: boolean; pgrep: boolean; pid: number | null; running: boolean }>;
 
@@ -31,7 +31,7 @@ export async function avdLiveness(avd: string, opts: { exec: Exec; env: Runtime[
     try {
       dir = findAvd(avd, { env: opts.env }).dir;
     } catch {
-      dir = null; // AVD sumiu do disco: so o pgrep decide
+      dir = null; // AVD gone from disk: only pgrep decides
     }
   }
   const lock = dir !== null && runningLocks(dir).length > 0;
@@ -39,7 +39,7 @@ export async function avdLiveness(avd: string, opts: { exec: Exec; env: Runtime[
   return Object.freeze({ dir, lock, pgrep: pid !== null, pid, running: lock || pid !== null });
 }
 
-// `simctl list devices -j`; falha (sem Xcode) = null, nunca erro.
+// `simctl list devices -j`; failure (no Xcode) = null, never an error.
 export async function listSimDevices(rt: Runtime): Promise<SimDevice[] | null> {
   try {
     return await createSimctl({ exec: rt.exec, sleep: rt.sleep, now: rt.now }).listDevices();
@@ -51,18 +51,18 @@ export async function listSimDevices(rt: Runtime): Promise<SimDevice[] | null> {
 export type SessionStatus = Readonly<{
   platform: 'android' | 'ios';
   name: string;
-  id: string; // serial (Android) ou UDID (iOS)
+  id: string; // serial (Android) or UDID (iOS)
   pid: number;
   startedAt: string;
   alive: boolean;
   stale: boolean;
-  // Auto-desligar (`up --idle-down`): ms parado ate desligar, pid do watcher e
-  // se ele ainda vive (pidAlive). null = sem auto-desligar.
+  // Idle-down (`up --idle-down`): idle ms before shutdown, watcher pid and
+  // whether it is still alive (pidAlive). null = no idle-down.
   idleDown: Readonly<{ ms: number; watcherPid: number; watcherAlive: boolean }> | null;
 }>;
 
-// Entrada morta: Android sem lock nem qemu; iOS com o device desligado ou
-// inexistente. Sem lista do simctl (null) nao da para afirmar: conta como viva.
+// Dead entry: Android with no lock and no qemu; iOS with the device shut down or
+// missing. Without the simctl list (null) we cannot tell: counts as alive.
 export async function sessionStatus(
   entries: readonly SessionEntry[],
   opts: { exec: Exec; env: Runtime['env']; devices: readonly SimDevice[] | null; pidAlive?: PidAlive },
@@ -94,13 +94,13 @@ export { readSwap, type SwapStatus } from './swap.ts';
 export type IosStatus = Readonly<{
   udid: string;
   name: string;
-  state: string; // do simctl; 'missing' (sumiu) ou 'unknown' (simctl falhou)
+  state: string; // from simctl; 'missing' (gone) or 'unknown' (simctl failed)
   booted: boolean;
   hasState: boolean;
   profile: IosProfileRecord | null;
-  expected: number | null; // labels que o perfil salvo desliga
-  disabledInStore: number | null; // desses, quantos estao desligados no store agora
-  drift: boolean | null; // store perdeu entradas do perfil (ex. depois de erase)
+  expected: number | null; // labels the saved profile disables
+  disabledInStore: number | null; // of those, how many are disabled in the store now
+  drift: boolean | null; // store lost profile entries (e.g. after erase)
 }>;
 
 export type AndroidStatus = Readonly<{
@@ -108,28 +108,28 @@ export type AndroidStatus = Readonly<{
   dir: string | null;
   exists: boolean;
   tuned: boolean;
-  ramMb: number | null; // = ramRequestedMb (mantido por compatibilidade)
-  gpu: string | null; // gpu pedida no tune
-  ramRequestedMb: number | null; // -memory do ultimo up/bake (lastLaunch); state antigo: o do perfil do tune
-  ramEffectiveMb: number | null; // hw.ramSize do hardware-qemu.ini do ultimo boot; null sem o arquivo
-  ramFloored: boolean; // efetiva acima da pedida: o emulador elevou
-  gpuEffective: string | null; // hw.gpu.mode do hardware-qemu.ini do ultimo boot
-  baked: boolean; // snapshots/slim_base existe
+  ramMb: number | null; // = ramRequestedMb (kept for compatibility)
+  gpu: string | null; // gpu requested by tune
+  ramRequestedMb: number | null; // -memory of the last up/bake (lastLaunch); old state: the tune profile one
+  ramEffectiveMb: number | null; // hw.ramSize from the last boot hardware-qemu.ini; null without the file
+  ramFloored: boolean; // effective above requested: the emulator raised it
+  gpuEffective: string | null; // hw.gpu.mode from the last boot hardware-qemu.ini
+  baked: boolean; // snapshots/slim_base exists
   bakedAt: string | null;
   running: boolean;
   runningBy: Readonly<{ lock: boolean; pgrep: boolean }>;
   pid: number | null;
-  // false = AVD rodando sem state do devslim (aparece so enquanto roda).
+  // false = AVD running without devslim state (shown only while it runs).
   hasState: boolean;
-  // Quem lancou o emulador rodando (linha de comando do qemu); null parado ou ilegivel.
+  // Who launched the running emulator (qemu command line); null when stopped or unreadable.
   launcher: Launcher | null;
-  // Rodando: entrada em avd/running com grpc.port e grpc.token (o argent so
-  // enxerga assim); null parado. grpcPort da entrada, se houver.
+  // Running: entry in avd/running with grpc.port and grpc.token (the only way argent
+  // sees it); null when stopped. grpcPort from the entry, if any.
   advertised: boolean | null;
   grpcPort: number | null;
 }>;
 
-// Contrato estavel do `status --json`.
+// Stable contract of `status --json`.
 export type StatusReport = Readonly<{
   ios: readonly IosStatus[];
   android: readonly AndroidStatus[];
@@ -151,7 +151,7 @@ async function iosStatus(rt: Runtime, ctx: IosContext, devices: readonly SimDevi
     try {
       st = loadState<IosState>('ios', udid, { env: rt.env });
     } catch {
-      st = null; // state corrompido: aparece sem perfil
+      st = null; // corrupt state: shown without profile
     }
     const dev = devices?.find((d) => d.udid.toUpperCase() === udid.toUpperCase());
     const profile = st?.profile ?? null;
@@ -160,7 +160,7 @@ async function iosStatus(rt: Runtime, ctx: IosContext, devices: readonly SimDevi
       try {
         expectedLabels = labelsToDisable({ capabilities: profile.capabilities as Capability[], except: profile.except, keep: profile.keep });
       } catch {
-        expectedLabels = null; // perfil salvo com id que nao existe mais
+        expectedLabels = null; // saved profile with an id that no longer exists
       }
     }
     let disabledInStore: number | null = null;
@@ -169,7 +169,7 @@ async function iosStatus(rt: Runtime, ctx: IosContext, devices: readonly SimDevi
         const store = await readStore(udid, { base: ctx.storeBase, exec: rt.exec });
         disabledInStore = expectedLabels.filter((l) => store.get(l) === true).length;
       } catch {
-        disabledInStore = null; // store ilegivel
+        disabledInStore = null; // unreadable store
       }
     }
     const expected = expectedLabels?.length ?? profile?.labels ?? null;
@@ -188,10 +188,10 @@ async function iosStatus(rt: Runtime, ctx: IosContext, devices: readonly SimDevi
   return [...byUdid.values()].sort((a, b) => a.name.localeCompare(b.name) || a.udid.localeCompare(b.udid));
 }
 
-// AVDs com state, mais todo emulador rodando de AVD sem state (pgrep -fl).
+// AVDs with state, plus every running emulator of an AVD without state (pgrep -fl).
 async function androidStatus(rt: Runtime, session: readonly SessionEntry[]): Promise<AndroidStatus[]> {
   const processes = await listQemuProcesses(rt.exec);
-  // So entradas de pid vivo: pid_<pid>.ini de emulador morto nao e anuncio.
+  // Only live pid entries: pid_<pid>.ini of a dead emulator is not an advertisement.
   const announced: readonly RunningEntry[] = scanRunning(rt.runningDir, rt.pidAlive).live;
   const stated = listStates('android', { env: rt.env });
   const unstated = [...new Set(processes.map((p) => p.avd))].filter((n) => !stated.includes(n));
@@ -219,7 +219,7 @@ async function androidStatus(rt: Runtime, session: readonly SessionEntry[]): Pro
     const launcher = running ? (await launcherFor(avd, { exec: rt.exec, pid, inSession, processes })).launcher : null;
     const hw = info === null ? null : readEffectiveHardware(info.dir);
     const entry = running ? findRunningEntry(announced, avd) : null;
-    const requested = requestedRamMb(st); // ultimo up/bake (lastLaunch), senao o perfil do tune
+    const requested = requestedRamMb(st); // last up/bake (lastLaunch), else the tune profile
     const effective = hw?.ramMb ?? null;
     out.push(Object.freeze({
       avd,
@@ -263,75 +263,75 @@ export async function collectStatus(ctx: IosContext = {}): Promise<StatusReport>
   });
 }
 
-// "ram pedida 2048 MB, efetiva 2560 MB (emulador elevou)"; sem hardware-qemu.ini, so a pedida.
+// "ram requested 2048 MB, effective 2560 MB (emulator raised it)"; without hardware-qemu.ini, only the requested one.
 function ramText(a: AndroidStatus): string {
-  const asked = `ram pedida ${a.ramRequestedMb ?? '?'} MB`;
+  const asked = `ram requested ${a.ramRequestedMb ?? '?'} MB`;
   if (a.ramEffectiveMb === null) return asked;
-  return `${asked}, efetiva ${a.ramEffectiveMb} MB${a.ramFloored ? ' (emulador elevou)' : ''}`;
+  return `${asked}, effective ${a.ramEffectiveMb} MB${a.ramFloored ? ' (emulator raised it)' : ''}`;
 }
 
-// AVD sem state: so o que o emulador de fato usou, se ha hardware-qemu.ini.
+// AVD without state: only what the emulator actually used, if there is a hardware-qemu.ini.
 function effectiveText(a: AndroidStatus): string {
   const parts = [
-    a.ramEffectiveMb === null ? null : `ram efetiva ${a.ramEffectiveMb} MB`,
-    a.gpuEffective === null ? null : `gpu efetiva ${a.gpuEffective}`,
+    a.ramEffectiveMb === null ? null : `effective ram ${a.ramEffectiveMb} MB`,
+    a.gpuEffective === null ? null : `effective gpu ${a.gpuEffective}`,
   ].filter((x) => x !== null);
   return parts.length === 0 ? '' : ` (${parts.join(', ')})`;
 }
 
 function gpuText(a: AndroidStatus): string {
   if (a.gpuEffective === null || a.gpuEffective === a.gpu) return `gpu ${a.gpu ?? '?'}`;
-  return `gpu pedida ${a.gpu ?? '?'}, efetiva ${a.gpuEffective}`;
+  return `gpu requested ${a.gpu ?? '?'}, effective ${a.gpuEffective}`;
 }
 
-// Linhas de texto: uma por device/entrada, mais o swap.
+// Text lines: one per device/entry, plus swap.
 export function statusText(s: StatusReport): string[] {
   const lines: string[] = [];
   for (const d of s.ios) {
     if (!d.hasState) {
-      lines.push(`ios ${d.name} (${d.udid}) ${d.state}: sem state do devslim`);
+      lines.push(`ios ${d.name} (${d.udid}) ${d.state}: no devslim state`);
       continue;
     }
     const p = d.profile;
-    const caps = p !== null && p.capabilities.length > 0 ? ` (capacidades ${p.capabilities.join(',')})` : '';
-    const store = d.disabledInStore === null ? 'store ilegivel ou ausente' : `store ${d.disabledInStore}/${d.expected} desligados`;
-    // State de simulador que nao existe mais: so o registro sobra.
-    const orphan = d.state === 'missing' ? `, simulador nao existe mais; state orfao: devslim ios forget ${d.udid}` : '';
-    lines.push(`ios ${d.name} (${d.udid}) ${d.state}: perfil ${d.expected ?? '?'} labels${caps}, ${store}${d.drift ? ', DRIFT (rode devslim ios up de novo)' : ''}${orphan}`);
+    const caps = p !== null && p.capabilities.length > 0 ? ` (capabilities ${p.capabilities.join(',')})` : '';
+    const store = d.disabledInStore === null ? 'store unreadable or absent' : `store ${d.disabledInStore}/${d.expected} disabled`;
+    // State of a simulator that no longer exists: only the record remains.
+    const orphan = d.state === 'missing' ? `, simulator no longer exists; orphan state: devslim ios forget ${d.udid}` : '';
+    lines.push(`ios ${d.name} (${d.udid}) ${d.state}: profile ${d.expected ?? '?'} labels${caps}, ${store}${d.drift ? ', DRIFT (run devslim ios up again)' : ''}${orphan}`);
   }
   for (const a of s.android) {
     const parts: string[] = [];
     if (!a.hasState) {
-      parts.push(`sem state do devslim${effectiveText(a)}`);
-      parts.push(a.exists ? `baked ${a.baked ? 'sim' : 'nao'}` : 'AVD nao encontrado');
+      parts.push(`no devslim state${effectiveText(a)}`);
+      parts.push(a.exists ? `baked ${a.baked ? 'yes' : 'no'}` : 'AVD not found');
     } else {
       parts.push(
         a.exists
           ? a.tuned
-            ? `tunado (${ramText(a)}, ${gpuText(a)})`
-            : 'nao tunado'
-          : `AVD nao encontrado (${a.dir ?? '?'}); state orfao: devslim android forget ${a.avd}`,
-        `baked ${a.baked ? 'sim' : 'nao'}`,
+            ? `tuned (${ramText(a)}, ${gpuText(a)})`
+            : 'not tuned'
+          : `AVD not found (${a.dir ?? '?'}); orphan state: devslim android forget ${a.avd}`,
+        `baked ${a.baked ? 'yes' : 'no'}`,
       );
     }
     const by = [a.runningBy.lock ? 'lock' : null, a.runningBy.pgrep ? `pgrep pid ${a.pid}` : null].filter((x) => x !== null);
-    // Sufixo so quando o emulador nao e nosso.
+    // Suffix only when the emulator is not ours.
     const who = a.launcher === 'argent' || a.launcher === 'other' ? ` ${launcherText(a.launcher)}` : '';
-    const ad = a.running && a.advertised === false ? ' sem anuncio gRPC' : '';
-    parts.push(a.running ? `rodando (${by.join(', ')})${who}${ad}` : 'parado');
+    const ad = a.running && a.advertised === false ? ' no gRPC advertisement' : '';
+    parts.push(a.running ? `running (${by.join(', ')})${who}${ad}` : 'stopped');
     lines.push(`android ${a.avd}: ${parts.join(', ')}`);
   }
   for (const e of s.session) {
     const w = e.idleDown;
-    const idle = w === null ? '' : `, auto-desligar em ${formatDuration(w.ms)} sem app em uso (watcher pid ${w.watcherPid} ${w.watcherAlive ? 'vivo' : 'MORTO'})`;
-    lines.push(`sessao ${e.platform} ${e.name} ${e.id}: ${e.stale ? 'STALE (devslim down limpa)' : 'viva'}${idle}`);
+    const idle = w === null ? '' : `, idle-down after ${formatDuration(w.ms)} with no app in use (watcher pid ${w.watcherPid} ${w.watcherAlive ? 'alive' : 'DEAD'})`;
+    lines.push(`session ${e.platform} ${e.name} ${e.id}: ${e.stale ? 'STALE (devslim down cleans it)' : 'alive'}${idle}`);
   }
-  if (s.ios.length === 0) lines.push('ios: nada bootado e nenhum state');
-  if (s.android.length === 0) lines.push('android: nenhum AVD com state nem emulador rodando');
-  if (s.session.length === 0) lines.push('sessao: vazia');
+  if (s.ios.length === 0) lines.push('ios: nothing booted and no state');
+  if (s.android.length === 0) lines.push('android: no AVD with state and no emulator running');
+  if (s.session.length === 0) lines.push('session: empty');
   const w = s.swap;
-  if (w.percent === null) lines.push('swap: nao lido');
+  if (w.percent === null) lines.push('swap: not read');
   else if (w.totalMb === 0) lines.push(`swap: ${NO_SWAP_FILE_TEXT}`);
-  else lines.push(`swap: ${w.usedMb} de ${w.totalMb} MB (${w.percent}%)`);
+  else lines.push(`swap: ${w.usedMb} of ${w.totalMb} MB (${w.percent}%)`);
   return lines;
 }

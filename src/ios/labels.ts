@@ -1,13 +1,13 @@
 import type { Capability } from '../capabilities.ts';
 import { DevslimError } from '../errors.ts';
 
-// Labels launchd `com.apple.*` que o perfil iOS pode desligar, agrupados em
-// categorias. Labels e agrupamento transcritos do simslim (profiles.go, MIT,
-// ver NOTICE); textos de "o que quebra" com redacao propria.
+// launchd `com.apple.*` labels the iOS profile can disable, grouped into
+// categories. Labels and grouping transcribed from simslim (profiles.go, MIT,
+// see NOTICE); the "what breaks" texts are our own wording.
 //
-// Um label pode aparecer em mais de uma categoria (um daemon serve mais de um
-// recurso). Categoria mantida (por `except` ou por capacidade) mantem TODOS os
-// seus labels ligados, mesmo os que outra categoria tambem lista.
+// A label can appear in more than one category (one daemon serves more than one
+// feature). A kept category (via `except` or a capability) keeps ALL of its
+// labels enabled, even those another category also lists.
 
 export const CATEGORY_IDS = Object.freeze([
   'widgets',
@@ -36,7 +36,7 @@ export const CATEGORIES: Readonly<Record<CategoryId, readonly string[]>> = Objec
     'com.apple.PosterBoard',
     'com.apple.chronod',
     'com.apple.liveactivitiesd',
-    'com.apple.navd', // tambem em connectivity: o widget de Mapas fica em loop sem ele
+    'com.apple.navd', // also in connectivity: the Maps widget loops without it
   ]),
   siri: f([
     'com.apple.assistant_cdmd',
@@ -105,11 +105,11 @@ export const CATEGORIES: Readonly<Record<CategoryId, readonly string[]>> = Objec
     'com.apple.itunescloudd',
     'com.apple.itunesstored',
     'com.apple.storekitd',
-    // folha de pagamento do StoreKit (AMS); tambem em icloud
+    // StoreKit payment sheet (AMS); also in icloud
     'com.apple.amsaccountsd',
     'com.apple.amsengagementd',
     'com.apple.amsondevicestoraged',
-    // Wallet hospeda a folha de pagamento e depende do financed; tambem em other
+    // Wallet hosts the payment sheet and depends on financed; also in other
     'com.apple.passd',
     'com.apple.financed',
     'com.apple.videosubscriptionsd',
@@ -243,37 +243,37 @@ export const CATEGORIES: Readonly<Record<CategoryId, readonly string[]>> = Objec
   ]),
 });
 
-// O que para de funcionar quando a categoria fica desligada (redacao propria).
+// What stops working when the category is disabled (our own wording).
 export const CATEGORY_BREAKS: Readonly<Record<CategoryId, string>> = Object.freeze({
-  widgets: 'widgets, papel de parede (posters) e Live Activities param de atualizar',
-  siri: 'Siri, ditado/fala e Apple Intelligence indisponiveis',
-  search: 'Spotlight e busca dos Ajustes vazios; Recentes do Arquivos e do seletor de documentos nao carregam',
-  icloud: 'iCloud, conta Apple (login Apple ID), Keychain e backup',
-  store: 'push remoto, StoreKit (compra no app) e App Store',
-  pim: 'Contatos, Calendario, Lembretes e Mail (e seletores que dependem deles)',
-  web: 'universal links (associated domains), sync do Safari e web push',
-  family: 'Compartilhamento Familiar e Tempo de Uso',
-  health: 'HealthKit, HomeKit e Fitness',
-  photos: 'biblioteca de Fotos, seletor de fotos e analise de midia',
-  apps: 'dados de fundo de News, Tempo e Mapas; controles de jogo',
-  messaging: 'iMessage, FaceTime e servicos de identidade',
-  connectivity: 'AirDrop, Continuidade, CarPlay, Watch e Buscar',
-  telemetry: 'DeviceCheck, analytics, diagnosticos e Feedback',
-  mdm: 'gerenciamento declarativo de device (MDM, perfis de configuracao)',
-  other: 'Wallet, App Clips, assets de acessibilidade e servicos diversos de fundo',
+  widgets: 'widgets, wallpaper (posters) and Live Activities stop updating',
+  siri: 'Siri, dictation/speech and Apple Intelligence unavailable',
+  search: 'Spotlight and Settings search empty; Recents in Files and the document picker do not load',
+  icloud: 'iCloud, Apple account (Apple ID sign-in), Keychain and backup',
+  store: 'remote push, StoreKit (in-app purchase) and App Store',
+  pim: 'Contacts, Calendar, Reminders and Mail (and pickers that depend on them)',
+  web: 'universal links (associated domains), Safari sync and web push',
+  family: 'Family Sharing and Screen Time',
+  health: 'HealthKit, HomeKit and Fitness',
+  photos: 'Photos library, photo picker and media analysis',
+  apps: 'background data for News, Weather and Maps; game controllers',
+  messaging: 'iMessage, FaceTime and identity services',
+  connectivity: 'AirDrop, Continuity, CarPlay, Watch and Find My',
+  telemetry: 'DeviceCheck, analytics, diagnostics and Feedback',
+  mdm: 'declarative device management (MDM, configuration profiles)',
+  other: 'Wallet, App Clips, accessibility assets and miscellaneous background services',
 });
 
-// Nunca desligados, mesmo listados ao lado de uma categoria no simslim:
-// assistantd (ditado; sem ele o Spotlight vaza memoria), gamed (launch de app
-// via XCUITest), sharingd (folha de compartilhar).
+// Never disabled, even when listed next to a category in simslim:
+// assistantd (dictation; without it Spotlight leaks memory), gamed (app launch
+// via XCUITest), sharingd (share sheet).
 export const ALWAYS_ENABLED = Object.freeze([
   'com.apple.assistantd',
   'com.apple.gamed',
   'com.apple.sharingd',
 ] as const);
 
-// Travam ou derrubam o simulador quando desligados (profiles_test.go do simslim).
-// Nenhum pode aparecer em categoria (teste de invariante).
+// Hang or crash the simulator when disabled (simslim profiles_test.go).
+// None may appear in a category (invariant test).
 export const FORBIDDEN = Object.freeze([
   'com.apple.nanoregistryd',
   'com.apple.nanoregistrylaunchd',
@@ -292,33 +292,33 @@ export const FORBIDDEN = Object.freeze([
   'com.apple.donotdisturbd',
 ] as const);
 
-// Capacidade -> o que ela mantem ligado. Conferido com features.go do simslim:
-// push = apsd; StoreKit = storekitd, itunesstored, ams*, passd, financed (todos
-// na categoria store); App Store = appstored, itunesstored; universal links =
-// swcd (categoria web); Fotos = assetsd, photoanalysisd (categoria photos).
-// location: CoreLocation (com.apple.locationd) e GeoServices (com.apple.geod,
-// tiles e geocoding do MapKit) nao estao na lista gerida, entao nunca sao
-// desligados. Da lista, so MapKit.SnapshotService e do framework publico
-// (MapKit.framework/XPCServices, usado pelo MKMapSnapshotter); navd,
-// destinationd, Maps.* e geoanalyticsd servem o app Mapas, widgets ou telemetria.
+// Capability -> what it keeps enabled. Checked against simslim features.go:
+// push = apsd; StoreKit = storekitd, itunesstored, ams*, passd, financed (all
+// in the store category); App Store = appstored, itunesstored; universal links =
+// swcd (web category); Photos = assetsd, photoanalysisd (photos category).
+// location: CoreLocation (com.apple.locationd) and GeoServices (com.apple.geod,
+// MapKit tiles and geocoding) are not in the managed list, so they are never
+// disabled. From the list, only MapKit.SnapshotService belongs to the public framework
+// (MapKit.framework/XPCServices, used by MKMapSnapshotter); navd,
+// destinationd, Maps.* and geoanalyticsd serve the Maps app, widgets or telemetry.
 export const CAPABILITY_KEEPS: Readonly<Record<Capability, Readonly<{ categories: readonly CategoryId[]; labels: readonly string[] }>>> =
   Object.freeze({
     audio: Object.freeze({ categories: f<CategoryId>([]), labels: f<string>([]) }),
     camera: Object.freeze({ categories: f<CategoryId>(['photos']), labels: f<string>([]) }),
-    keyboard: Object.freeze({ categories: f<CategoryId>([]), labels: f<string>([]) }), // so Android (Gboard)
+    keyboard: Object.freeze({ categories: f<CategoryId>([]), labels: f<string>([]) }), // Android only (Gboard)
     location: Object.freeze({ categories: f<CategoryId>([]), labels: f(['com.apple.MapKit.SnapshotService']) }),
     push: Object.freeze({ categories: f<CategoryId>([]), labels: f(['com.apple.apsd']) }),
     store: Object.freeze({ categories: f<CategoryId>(['store', 'icloud']), labels: f<string>([]) }),
     weblogin: Object.freeze({ categories: f<CategoryId>(['web']), labels: f<string>([]) }),
-    window: Object.freeze({ categories: f<CategoryId>([]), labels: f<string>([]) }), // so abre o Simulator.app no `up`
+    window: Object.freeze({ categories: f<CategoryId>([]), labels: f<string>([]) }), // only opens Simulator.app on `up`
   });
 
 export function isCategoryId(value: string): value is CategoryId {
   return (CATEGORY_IDS as readonly string[]).includes(value);
 }
 
-// Universo de labels que o devslim pode mexer: uniao das categorias menos
-// ALWAYS_ENABLED. Qualquer leitura ou escrita fora disso e ignorada/recusada.
+// Universe of labels devslim may touch: union of the categories minus
+// ALWAYS_ENABLED. Any read or write outside it is ignored/refused.
 export function managedSet(): Set<string> {
   const set = new Set<string>();
   for (const id of CATEGORY_IDS) for (const l of CATEGORIES[id]) set.add(l);
@@ -326,16 +326,16 @@ export function managedSet(): Set<string> {
   return set;
 }
 
-// Reparo: ALWAYS_ENABLED que o store traz desligados (herdado de outra
-// ferramenta) sao gravados como ligados (<false/>) no `up`, com backup, e
-// voltam ao valor salvo no `off`. O devslim nunca os desliga; `except`/`keep`
-// nao alcancam o reparo (keep so aceita labels do managedSet).
+// Repair: ALWAYS_ENABLED labels the store has disabled (inherited from another
+// tool) are written as enabled (<false/>) on `up`, with a backup, and
+// return to the saved value on `off`. devslim never disables them; `except`/`keep`
+// do not reach the repair (keep only accepts labels from managedSet).
 export function repairSet(): Set<string> {
   return new Set<string>(ALWAYS_ENABLED);
 }
 
-// Tudo que o devslim pode tocar: managedSet() (desligar/devolver) mais
-// repairSet() (so religar/devolver). Fora disso, nada e lido para diff nem escrito.
+// Everything devslim may touch: managedSet() (disable/restore) plus
+// repairSet() (only re-enable/restore). Outside it, nothing is read for diff or written.
 export function touchableSet(): Set<string> {
   const set = managedSet();
   for (const l of repairSet()) set.add(l);
@@ -344,15 +344,15 @@ export function touchableSet(): Set<string> {
 
 export type LabelsToDisableOptions = {
   capabilities?: readonly Capability[];
-  except?: readonly string[]; // ids de categoria mantidos ligados
-  keep?: readonly string[]; // labels avulsos mantidos ligados
+  except?: readonly string[]; // category ids kept enabled
+  keep?: readonly string[]; // individual labels kept enabled
 };
 
-// Valida e normaliza `except` (ids de categoria) e `keep` (labels geridos).
+// Validates and normalizes `except` (category ids) and `keep` (managed labels).
 export function validateExcept(except: readonly string[] = []): CategoryId[] {
   const out: CategoryId[] = [];
   for (const id of except) {
-    if (!isCategoryId(id)) throw new DevslimError(`categoria desconhecida: ${id} (validas: ${CATEGORY_IDS.join(', ')})`);
+    if (!isCategoryId(id)) throw new DevslimError(`unknown category: ${id} (valid: ${CATEGORY_IDS.join(', ')})`);
     if (!out.includes(id)) out.push(id);
   }
   return out;
@@ -362,21 +362,21 @@ export function validateKeep(keep: readonly string[] = []): string[] {
   const managed = managedSet();
   const out: string[] = [];
   for (const l of keep) {
-    if (!managed.has(l)) throw new DevslimError(`label fora da lista gerida: ${l} (ver devslim ios categories)`);
+    if (!managed.has(l)) throw new DevslimError(`label outside the managed list: ${l} (see devslim ios categories)`);
     if (!out.includes(l)) out.push(l);
   }
   return out;
 }
 
-// managedSet menos o que as capacidades religam, menos categorias em `except`,
-// menos labels em `keep`. Ordenado.
+// managedSet minus what the capabilities re-enable, minus categories in `except`,
+// minus labels in `keep`. Sorted.
 export function labelsToDisable(opts: LabelsToDisableOptions = {}): string[] {
   const set = managedSet();
   const cats = new Set<CategoryId>(validateExcept(opts.except));
   const keep = new Set<string>(validateKeep(opts.keep));
   for (const cap of opts.capabilities ?? []) {
     const k = CAPABILITY_KEEPS[cap];
-    if (k === undefined) throw new DevslimError(`capacidade desconhecida: ${cap}`);
+    if (k === undefined) throw new DevslimError(`unknown capability: ${cap}`);
     for (const c of k.categories) cats.add(c);
     for (const l of k.labels) keep.add(l);
   }

@@ -19,19 +19,19 @@ import {
   type Simctl,
 } from './simctl.ts';
 
-// Enxugar um simulador iOS: marcar labels launchd geridos como desligados no
-// disabled.plist do device (com ele desligado), bootar e conferir com
-// `launchctl print-disabled`. Runtime compartilhado nunca e tocado.
-// Invariante: todo diff, leitura comparada e escrita considera so
-// managedSet() (desligar/devolver) e repairSet() (religar/devolver); nada fora
-// de touchableSet() e tocado, e nenhum label de repairSet() recebe disable.
+// Slimming an iOS simulator: mark managed launchd labels as disabled in the
+// device disabled.plist (with it shut down), boot and verify with
+// `launchctl print-disabled`. The shared runtime is never touched.
+// Invariant: every diff, compared read and write considers only
+// managedSet() (disable/restore) and repairSet() (re-enable/restore); nothing outside
+// touchableSet() is touched, and no repairSet() label is ever disabled.
 
 export const MIN_IOS_VERSION = Object.freeze([18, 5] as const);
 export const FALLBACK_POOL = 8;
 export const FALLBACK_PASSES = 3;
 
-// `storeBase`: base do disabled.plist (padrao /private/var/tmp).
-// bootTimeoutMs -> bootstatus; exitTimeoutMs -> espera do shutdown; pollMs -> poll do shutdown.
+// `storeBase`: disabled.plist base (default /private/var/tmp).
+// bootTimeoutMs -> bootstatus; exitTimeoutMs -> shutdown wait; pollMs -> shutdown poll.
 export type IosContext = RuntimeContext & { storeBase?: string };
 
 export type IosSlimOptions = {
@@ -66,14 +66,14 @@ export function compareVersion(a: string, min: readonly number[]): number {
   return 0;
 }
 
-// Gate: so iOS, e so >= 18.5 (antes disso o launchd_sim nao persiste overrides).
+// Gate: iOS only, and only >= 18.5 (before that launchd_sim does not persist overrides).
 export function checkIosRuntime(runtime: RuntimeInfo): RuntimeInfo {
   if (runtime.platform !== 'iOS') {
-    throw new DevslimError(`runtime ${runtime.platform} ${runtime.version} fora de escopo: devslim ios so trata simulador iOS`);
+    throw new DevslimError(`runtime ${runtime.platform} ${runtime.version} out of scope: devslim ios only handles iOS simulators`);
   }
   if (!/^\d+(\.\d+)*$/.test(runtime.version) || compareVersion(runtime.version, MIN_IOS_VERSION) < 0) {
     throw new DevslimError(
-      `iOS ${runtime.version} nao suportado: exige iOS ${MIN_IOS_VERSION.join('.')} ou mais novo (versoes antigas nao guardam os overrides do launchd entre boots)`,
+      `iOS ${runtime.version} not supported: requires iOS ${MIN_IOS_VERSION.join('.')} or newer (older versions do not keep launchd overrides across boots)`,
     );
   }
   return runtime;
@@ -84,11 +84,11 @@ async function runtimeOf(simctl: Simctl, device: SimDevice): Promise<RuntimeInfo
   try {
     found = (await simctl.listRuntimes()).find((r) => r.identifier === device.runtimeId);
   } catch {
-    found = undefined; // cai no parse do identificador
+    found = undefined; // fall back to parsing the identifier
   }
   if (found !== undefined) return Object.freeze({ identifier: found.identifier, platform: found.platform, version: found.version });
   const parsed = parseRuntimeId(device.runtimeId);
-  if (parsed === null) throw new DevslimError(`runtime desconhecido para ${device.name}: ${device.runtimeId}`);
+  if (parsed === null) throw new DevslimError(`unknown runtime for ${device.name}: ${device.runtimeId}`);
   return Object.freeze({ identifier: device.runtimeId, ...parsed });
 }
 
@@ -98,17 +98,17 @@ function iosStatePath(udid: string, rt: Runtime): string {
 
 function assertManaged(labels: Iterable<string>, managed: ReadonlySet<string>): void {
   for (const l of labels) {
-    if (!managed.has(l)) throw new DevslimError(`interno: label fora da lista gerida: ${l}`);
+    if (!managed.has(l)) throw new DevslimError(`internal: label outside the managed list: ${l}`);
   }
 }
 
-// Labels de repairSet() que o store traz desligados (true): o `up` grava false.
+// repairSet() labels the store has disabled (true): `up` writes false.
 function needsRepair(current: ReadonlyMap<string, boolean>): string[] {
   return [...repairSet()].filter((l) => current.get(l) === true).sort();
 }
 
-// Alvo do store/launchd: labels do perfil -> true; labels que nos mexemos antes
-// (backup) e que o perfil nao desliga mais -> valor salvo (ausente = false).
+// Store/launchd target: profile labels -> true; labels we touched before
+// (backup) that the profile no longer disables -> saved value (absent = false).
 function targetMap(desired: readonly string[], backup: IosState['backup'] | undefined, managed: ReadonlySet<string>): Map<string, boolean> {
   const target = new Map<string, boolean>();
   for (const l of desired) target.set(l, true);
@@ -119,7 +119,7 @@ function targetMap(desired: readonly string[], backup: IosState['backup'] | unde
   return target;
 }
 
-// O que o launchd vivo ainda nao reflete do alvo (so labels de touchableSet()).
+// What the live launchd does not reflect from the target yet (touchableSet() labels only).
 function mismatches(live: ReadonlyMap<string, boolean>, target: ReadonlyMap<string, boolean>, touchable: ReadonlySet<string>) {
   const toDisable: string[] = [];
   const toEnable: string[] = [];
@@ -132,7 +132,7 @@ function mismatches(live: ReadonlyMap<string, boolean>, target: ReadonlyMap<stri
   return { toDisable: toDisable.sort(), toEnable: toEnable.sort() };
 }
 
-// Pool de `limit` workers; devolve os itens cujo fn falhou (false ou excecao).
+// Pool of `limit` workers; returns the items whose fn failed (false or exception).
 export async function runPool<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<boolean>): Promise<T[]> {
   const failed: T[] = [];
   let next = 0;
@@ -162,7 +162,7 @@ function profileRecord(opts: IosSlimOptions, labels: number): IosProfileRecord {
 }
 
 // ---------------------------------------------------------------------------
-// plan (sem efeitos: so simctl list e leitura do store)
+// plan (no side effects: only simctl list and a store read)
 
 export type SimPlan = Readonly<{
   udid: string;
@@ -173,7 +173,7 @@ export type SimPlan = Readonly<{
   labels: readonly string[];
   managedTotal: number;
   alreadyInStore: number;
-  repair: readonly string[]; // ALWAYS_ENABLED desligados no store que o up religa
+  repair: readonly string[]; // ALWAYS_ENABLED disabled in the store that up re-enables
   storePath: string;
   storeExists: boolean;
   hasState: boolean;
@@ -216,13 +216,13 @@ export type UpSimResult = Readonly<{
   wasBooted: boolean;
   shutdownFirst: boolean;
   labels: number;
-  storeChanges: number; // entradas do disabled.plist que mudaram
-  backupAdded: number; // labels novos no backup do state (primeiro backup vence)
-  restored: readonly string[]; // geridos que o perfil nao desliga mais, devolvidos ao valor salvo
-  repaired: readonly string[]; // ALWAYS_ENABLED que estavam desligados no store e foram gravados ligados
+  storeChanges: number; // disabled.plist entries that changed
+  backupAdded: number; // new labels in the state backup (first backup wins)
+  restored: readonly string[]; // managed labels the profile no longer disables, returned to the saved value
+  repaired: readonly string[]; // ALWAYS_ENABLED that were disabled in the store and were written as enabled
   fallback: FallbackReport;
-  notApplied: readonly string[]; // deviam estar desligados e nao estao
-  notRestored: readonly string[]; // deviam estar ligados e nao estao
+  notApplied: readonly string[]; // should be disabled and are not
+  notRestored: readonly string[]; // should be enabled and are not
   windowOpened: boolean;
   statePath: string | null;
   bootMs: number | null;
@@ -232,7 +232,7 @@ async function guardAdb(rt: Runtime): Promise<Adb | null> {
   try {
     return rt.adb();
   } catch (err) {
-    if (err instanceof DevslimError) return null; // sem SDK Android: nenhum emulador a contar
+    if (err instanceof DevslimError) return null; // no Android SDK: no emulator to count
     throw err;
   }
 }
@@ -260,7 +260,7 @@ export async function upSim(query: string, opts: IosSlimOptions = {}, ctx: IosCo
   const target = targetMap(desired, prevState?.backup, managed);
   assertManaged(target.keys(), managed);
   const restored = [...target].filter(([l, v]) => !v && !desired.includes(l)).map(([l]) => l).sort();
-  // Conferencia: alem do alvo, todo ALWAYS_ENABLED tem de aparecer ligado.
+  // Verification: besides the target, every ALWAYS_ENABLED must show as enabled.
   const verify = new Map(target);
   for (const l of repairSet()) verify.set(l, false);
   const noFallback: FallbackReport = Object.freeze({ used: false, passes: 0, failed: Object.freeze([]), rebooted: false });
@@ -268,7 +268,7 @@ export async function upSim(query: string, opts: IosSlimOptions = {}, ctx: IosCo
   const wasBooted = device.state === 'Booted';
   let shutdownFirst = false;
   if (wasBooted) {
-    await simctl.bootstatus(udid); // `Booted` aparece no inicio do boot; espera o launchd
+    await simctl.bootstatus(udid); // `Booted` shows up early in the boot; wait for launchd
     const live = await simctl.printDisabled(udid);
     const mm = mismatches(live, verify, touchable);
     if (mm.toDisable.length === 0 && mm.toEnable.length === 0) {
@@ -294,19 +294,19 @@ export async function upSim(query: string, opts: IosSlimOptions = {}, ctx: IosCo
         bootMs: null,
       });
     }
-    // Vai rebootar: conta como boot para a guarda de swap.
+    // About to reboot: counts as a boot for the swap guard.
     await swapGate({ exec: rt.exec, stderr: rt.stderr, force: ctx.force === true, action: 'ios up' });
-    // Override so vale no proximo boot: desliga antes de escrever o store.
+    // Overrides only apply on the next boot: shut down before writing the store.
     await simctl.shutdown(udid);
     shutdownFirst = true;
   } else if (device.state !== 'Shutdown') {
-    throw new DevslimError(`simulador ${device.name} (${udid}) em estado "${device.state}"; espere ficar Booted ou Shutdown`);
+    throw new DevslimError(`simulator ${device.name} (${udid}) in state "${device.state}"; wait until it is Booted or Shutdown`);
   } else {
     await swapGate({ exec: rt.exec, stderr: rt.stderr, force: ctx.force === true, action: 'ios up' });
   }
 
-  // Backup antes de escrever: valor atual no store de cada label que o perfil
-  // desliga e de cada ALWAYS_ENABLED que vai ser reparado (estava true).
+  // Backup before writing: current store value of each label the profile
+  // disables and of each ALWAYS_ENABLED about to be repaired (was true).
   const current = await readStore(udid, store);
   const repaired = needsRepair(current);
   const previous = new Map<string, boolean | undefined>(desired.map((l) => [l, current.get(l)]));
@@ -315,17 +315,17 @@ export async function upSim(query: string, opts: IosSlimOptions = {}, ctx: IosCo
 
   const writes = new Map(target);
   for (const l of repaired) writes.set(l, false);
-  assertManaged([...writes].filter(([, v]) => v).map(([l]) => l), managed); // true so em gerido
+  assertManaged([...writes].filter(([, v]) => v).map(([l]) => l), managed); // true only for managed
   assertManaged([...writes.keys()], touchable);
   const before = await mergeStore(udid, writes, store);
   const storeChanges = [...writes].filter(([l, v]) => before.get(l) !== v).length;
 
   const t0 = rt.now();
   await simctl.boot(udid);
-  // Este up bootou (do zero ou reboot para aplicar o perfil): o device e do
-  // devslim, entao `ios down` e `--idle-down` valem. Registra logo apos o boot:
-  // se o bootstatus falhar, `ios down` ainda acha. Reboot de device que ja
-  // estava na sessao mantem a entrada (e o registro do watcher dela).
+  // This up booted (from scratch or a reboot to apply the profile): the device belongs to
+  // devslim, so `ios down` and `--idle-down` apply. Records right after boot:
+  // if bootstatus fails, `ios down` still finds it. Rebooting a device already
+  // in the session keeps the entry (and its watcher record).
   const inSession = wasBooted && loadSession(rt.env).some((e) => e.platform === 'ios' && e.serial.toUpperCase() === udid.toUpperCase());
   if (!inSession) {
     recordSession({ platform: 'ios', avd: device.name, serial: udid, pid: 0, port: 0, startedAt: rt.date().toISOString() }, rt.env);
@@ -336,7 +336,7 @@ export async function upSim(query: string, opts: IosSlimOptions = {}, ctx: IosCo
   let mm = mismatches(await simctl.printDisabled(udid), verify, touchable);
   let fallback = noFallback;
   if (mm.toDisable.length > 0 || mm.toEnable.length > 0) {
-    // Store offline nao pegou (todo ou parte): launchctl por label, depois reboot.
+    // The offline store did not take (fully or partly): launchctl per label, then reboot.
     type T = { verb: 'disable' | 'enable'; label: string };
     let pending: T[] = [
       ...mm.toDisable.map((label): T => ({ verb: 'disable', label })),
@@ -386,9 +386,9 @@ async function openSimulatorApp(rt: Runtime): Promise<boolean> {
   try {
     const res = await rt.exec('open', ['-a', 'Simulator'], { timeoutMs: 30_000 });
     if (res.code === 0) return true;
-    rt.stderr(`devslim: aviso: open -a Simulator falhou (exit ${res.code})\n`);
+    rt.stderr(`devslim: warning: open -a Simulator failed (exit ${res.code})\n`);
   } catch (err) {
-    rt.stderr(`devslim: aviso: open -a Simulator falhou (${(err as Error).message})\n`);
+    rt.stderr(`devslim: warning: open -a Simulator failed (${(err as Error).message})\n`);
   }
   return false;
 }
@@ -399,11 +399,11 @@ async function openSimulatorApp(rt: Runtime): Promise<boolean> {
 export type OffSimResult = Readonly<{
   udid: string;
   name: string;
-  restored: number; // labels devolvidos ao valor salvo
+  restored: number; // labels returned to the saved value
   wasBooted: boolean;
   rebooted: boolean;
-  ignored: readonly string[]; // entradas do state fora de touchableSet (nao tocadas)
-  notRestored: readonly string[]; // conferido apos reboot (so se estava bootado)
+  ignored: readonly string[]; // state entries outside touchableSet (not touched)
+  notRestored: readonly string[]; // checked after reboot (only if it was booted)
   statePath: string;
 }>;
 
@@ -413,7 +413,7 @@ export async function offSim(query: string, ctx: IosContext = {}): Promise<OffSi
   const udid = device.udid;
   const state = loadState<IosState>('ios', udid, { env: rt.env });
   if (state === null || state.backup === null || typeof state.backup !== 'object') {
-    throw new DevslimError(`sem state para ${device.name} (${udid}); nada a desfazer (devslim ios up nao foi aplicado aqui)`);
+    throw new DevslimError(`no state for ${device.name} (${udid}); nothing to undo (devslim ios up was not applied here)`);
   }
   const touchable = touchableSet();
   const changes = new Map<string, boolean>();
@@ -423,14 +423,14 @@ export async function offSim(query: string, ctx: IosContext = {}): Promise<OffSi
       ignored.push(label);
       continue;
     }
-    if (v !== null && typeof v !== 'boolean') throw new DevslimError(`state corrompido: valor de ${label} nao e booleano nem null`);
-    changes.set(label, v === true); // ausente antes = false: remover a chave nao reabilita com seguranca
+    if (v !== null && typeof v !== 'boolean') throw new DevslimError(`corrupt state: value of ${label} is neither boolean nor null`);
+    changes.set(label, v === true); // absent before = false: removing the key does not reliably re-enable
   }
 
   const wasBooted = device.state === 'Booted';
   if (wasBooted) await simctl.shutdown(udid);
   else if (device.state !== 'Shutdown') {
-    throw new DevslimError(`simulador ${device.name} (${udid}) em estado "${device.state}"; espere ficar Booted ou Shutdown`);
+    throw new DevslimError(`simulator ${device.name} (${udid}) in state "${device.state}"; wait until it is Booted or Shutdown`);
   }
 
   await mergeStore(udid, changes, store);
@@ -466,9 +466,9 @@ export type DownSimOutcome = Readonly<{
   detail?: string;
 }>;
 
-// Desliga o que a sessao subiu (`ios up` que bootou ou rebootou o device). Com nome/UDID
-// fora da sessao exige --force; sem argumento e com --force, desliga tambem
-// todo simulador bootado.
+// Shuts down what the session started (`ios up` that booted or rebooted the device). A name/UDID
+// outside the session requires --force; with no argument and --force, also shuts down
+// every booted simulator.
 export async function downSim(query: string | undefined, ctx: IosContext & { force?: boolean } = {}): Promise<DownSimOutcome[]> {
   const { rt, simctl } = iosRuntime(ctx);
   const force = ctx.force === true;
@@ -481,7 +481,7 @@ export async function downSim(query: string | undefined, ctx: IosContext & { for
     const dev = resolveDevice(devices, query);
     const entry = session.find((e) => e.serial === dev.udid);
     if (entry === undefined && !force) {
-      throw new DevslimError(`simulador ${dev.name} (${dev.udid}) nao foi subido pelo devslim (nada na sessao); --force para desligar mesmo assim`);
+      throw new DevslimError(`simulator ${dev.name} (${dev.udid}) was not started by devslim (nothing in the session); --force to shut it down anyway`);
     }
     targets.push({ udid: dev.udid, name: dev.name, registered: entry !== undefined, ...(entry === undefined ? {} : { entry }) });
   } else {
@@ -496,12 +496,12 @@ export async function downSim(query: string | undefined, ctx: IosContext & { for
   const out: DownSimOutcome[] = [];
   for (const { entry, ...t } of targets) {
     const drop = () => removeSession((e) => e.platform === 'ios' && e.serial === t.udid, rt.env);
-    // Auto-desligar: o watcher sai antes do device (e o campo da sessao junto).
+    // Idle-down: the watcher goes before the device (along with the session field).
     if (entry !== undefined) await stopIdleWatcher(entry, rt);
     const dev = devices.find((d) => d.udid === t.udid);
     if (dev === undefined || dev.state === 'Shutdown') {
       drop();
-      out.push(Object.freeze({ ...t, result: 'stale', detail: dev === undefined ? 'simulador nao existe mais' : 'ja estava desligado' }));
+      out.push(Object.freeze({ ...t, result: 'stale', detail: dev === undefined ? 'simulator no longer exists' : 'was already shut down' }));
       continue;
     }
     try {

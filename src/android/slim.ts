@@ -2,9 +2,9 @@ import type { Capability } from '../capabilities.ts';
 import { isSafeSettingValue, type Adb, type PackageFailure, type SettingsNamespace } from './adb.ts';
 import { planDisable, planRestore, type BloatLevel } from './packages.ts';
 
-// Debloat do guest com o device ja bootado. Tudo e reversivel: o valor
-// anterior de cada setting e os pacotes que NOS desligamos voltam no state.
-// Nunca toca bluetooth, location nem background_process_limit.
+// Guest debloat with the device already booted. Everything is reversible: the previous
+// value of each setting and the packages WE disabled are kept in the state.
+// Never touches bluetooth, location or background_process_limit.
 
 export type SavedSetting = Readonly<{ ns: SettingsNamespace; key: string; previous: string | null }>;
 
@@ -15,11 +15,11 @@ export const SLIM_SETTINGS: readonly SettingSpec[] = Object.freeze([
   { ns: 'global', key: 'transition_animation_scale', value: '0' },
   { ns: 'global', key: 'animator_duration_scale', value: '0' },
   { ns: 'global', key: 'auto_sync', value: '0' },
-  // Tela "Teste a stylus" cobre o app em AVD de tablet.
+  // The "Try out your stylus" screen covers the app on tablet AVDs.
   { ns: 'secure', key: 'stylus_handwriting_enabled', value: '0' },
   { ns: 'secure', key: 'user_setup_complete', value: '1' },
   { ns: 'global', key: 'device_provisioned', value: '1' },
-  // So quando ausente/vazio: valor preexistente e de outra pessoa.
+  // Only when absent/empty: a preexisting value belongs to someone else.
   { ns: 'global', key: 'activity_manager_constants', value: 'max_cached_processes=8', onlyIfAbsent: true },
 ].map((s) => Object.freeze(s)) as SettingSpec[]);
 
@@ -42,8 +42,8 @@ export type SlimOptions = {
   adb: Adb;
   level: BloatLevel;
   capabilities?: readonly Capability[];
-  // State de um bake anterior: o que ja era nosso continua nosso, e o valor
-  // "anterior" de cada setting e o de antes do primeiro bake.
+  // State from a previous bake: what was already ours stays ours, and the "previous"
+  // value of each setting is the one from before the first bake.
   prior?: SlimPrior;
 };
 
@@ -54,10 +54,10 @@ export type SlimReport = Readonly<{
   settings: readonly SettingOutcome[];
   savedSettings: readonly SavedSetting[];
   plannedPackages: readonly string[];
-  disabledPackages: readonly string[]; // nossos (vao para o state)
+  disabledPackages: readonly string[]; // ours (go to the state)
   newlyDisabled: readonly string[];
-  alreadyDisabled: readonly string[]; // ja desligados antes de nos: fora do state
-  reenabled: readonly string[]; // nossos de antes que sairam do plano
+  alreadyDisabled: readonly string[]; // already disabled before us: not in the state
+  reenabled: readonly string[]; // previously ours that left the plan
   failedPackages: readonly PackageFailure[];
   packagesError: string | null;
   dexopt: StepOutcome;
@@ -72,7 +72,7 @@ async function shellStep(adb: Adb, serial: string, args: string[], timeoutMs?: n
     const res = await adb.shell(serial, args, timeoutMs);
     const out = (res.stdout + '\n' + res.stderr).trim();
     if (res.code !== 0 || /Failure|Exception/.test(out)) {
-      const why = res.code === null ? `sinal ${res.signal ?? '?'} (timeout?)` : `exit ${res.code}`;
+      const why = res.code === null ? `signal ${res.signal ?? '?'} (timeout?)` : `exit ${res.code}`;
       return Object.freeze({ ok: false, detail: `${why}${out ? `: ${out.split(/\r?\n/).slice(-1)[0]}` : ''}` });
     }
     return Object.freeze({ ok: true });
@@ -96,7 +96,7 @@ export async function slimRunningDevice(serial: string, opts: SlimOptions): Prom
     let current: string | null;
     try {
       const got = await adb.getSetting(serial, spec.ns, spec.key);
-      current = got === '' ? null : got; // vazio nao volta por adb shell: tratado como ausente
+      current = got === '' ? null : got; // empty cannot be restored via adb shell: treated as absent
     } catch (err) {
       settings.push(Object.freeze({ ...base, previous: prior?.previous ?? null, status: 'failed', note: errMsg(err) }));
       if (prior !== undefined) savedSettings.push(prior);
@@ -105,28 +105,28 @@ export async function slimRunningDevice(serial: string, opts: SlimOptions): Prom
     const previous = prior !== undefined ? prior.previous : current;
 
     if (spec.onlyIfAbsent && prior === undefined && current !== null) {
-      settings.push(Object.freeze({ ...base, previous, status: 'skipped', note: `ja tinha valor (${current}); nao mexido` }));
+      settings.push(Object.freeze({ ...base, previous, status: 'skipped', note: `already had a value (${current}); left alone` }));
       continue;
     }
     if (previous !== null && !isSafeSettingValue(previous)) {
-      settings.push(Object.freeze({ ...base, previous, status: 'skipped', note: 'valor anterior nao restauravel via adb shell; nao mexido' }));
+      settings.push(Object.freeze({ ...base, previous, status: 'skipped', note: 'previous value not restorable via adb shell; left alone' }));
       continue;
     }
     try {
       await adb.putSetting(serial, spec.ns, spec.key, spec.value);
     } catch (err) {
       settings.push(Object.freeze({ ...base, previous, status: 'failed', note: errMsg(err) }));
-      if (prior !== undefined) savedSettings.push(prior); // continua pendente do bake anterior
+      if (prior !== undefined) savedSettings.push(prior); // still pending from the previous bake
       continue;
     }
     settings.push(Object.freeze({ ...base, previous, status: 'set' }));
     savedSettings.push(Object.freeze({ ns: spec.ns, key: spec.key, previous }));
   }
-  // Settings de um bake anterior que esta lista nao cobre mais continuam pendentes.
+  // Settings from a previous bake that this list no longer covers stay pending.
   const covered = new Set(SLIM_SETTINGS.map(settingId));
   for (const s of priorSettings.values()) if (!covered.has(settingId(s))) savedSettings.push(s);
 
-  // 2. Pacotes.
+  // 2. Packages.
   let plannedPackages: string[] = [];
   const newlyDisabled: string[] = [];
   const alreadyDisabled: string[] = [];
@@ -140,13 +140,13 @@ export async function slimRunningDevice(serial: string, opts: SlimOptions): Prom
     plannedPackages = planDisable({ installed, level, capabilities });
     const planned = new Set(plannedPackages);
 
-    // Nossos de antes que o plano atual nao quer mais desligados (ex. capacidade nova).
+    // Previously ours that the current plan no longer wants disabled (e.g. new capability).
     const drop = planRestore([...priorOwned]).filter((p) => !planned.has(p));
     if (drop.length > 0) {
       const res = await adb.enablePackages(serial, drop);
       reenabled.push(...res.done);
       failedPackages.push(...res.failed);
-      keptOwned.push(...res.failed.map((f) => f.pkg)); // continua desligado e nosso
+      keptOwned.push(...res.failed.map((f) => f.pkg)); // stays disabled and ours
     }
 
     const toDisable: string[] = [];
@@ -160,11 +160,11 @@ export async function slimRunningDevice(serial: string, opts: SlimOptions): Prom
     failedPackages.push(...res.failed);
   } catch (err) {
     packagesError = errMsg(err);
-    keptOwned.push(...priorOwned); // sem leitura do device, nada do state anterior se perde
+    keptOwned.push(...priorOwned); // without a device read, nothing from the previous state is lost
   }
   const disabledPackages = [...new Set([...keptOwned, ...newlyDisabled])];
 
-  // 3. dexopt em lote (lento, nao fatal). 4. Mata processos em cache.
+  // 3. Batch dexopt (slow, non-fatal). 4. Kill cached processes.
   const dexopt = await shellStep(adb, serial, ['cmd', 'package', 'bg-dexopt-job'], DEXOPT_TIMEOUT_MS);
   const killAll = await shellStep(adb, serial, ['am', 'kill-all']);
 
@@ -194,12 +194,12 @@ export type UnslimReport = Readonly<{
   failedPackages: readonly PackageFailure[];
   restoredSettings: readonly SavedSetting[];
   failedSettings: readonly (SavedSetting & { error: string })[];
-  // O que nao voltou: fica no state para nova tentativa.
+  // What was not restored: stays in the state for another attempt.
   remaining: Readonly<{ disabledPackages: readonly string[]; settings: readonly SavedSetting[] }>;
 }>;
 
-// Reabilita so os pacotes do state e devolve cada setting ao valor salvo
-// (ausente = `settings delete`).
+// Re-enables only the state packages and returns each setting to its saved value
+// (absent = `settings delete`).
 export async function unslimRunningDevice(serial: string, opts: { adb: Adb; saved: SlimSaved }): Promise<UnslimReport> {
   const { adb, saved } = opts;
   const pkgs = await adb.enablePackages(serial, planRestore(saved.disabledPackages ?? []));

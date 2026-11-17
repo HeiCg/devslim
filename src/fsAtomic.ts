@@ -11,9 +11,9 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
-// Escreve num arquivo temporario no mesmo diretorio e faz rename por cima do
-// destino. Quem le o destino ve o conteudo antigo inteiro ou o novo inteiro,
-// nunca um arquivo pela metade. Preserva o modo do arquivo existente.
+// Writes to a temporary file in the same directory and renames it over the
+// target. A reader of the target sees either the whole old or the whole new content,
+// never a half-written file. Preserves the mode of the existing file.
 export function writeFileAtomic(path: string, data: string | Uint8Array, opts: { mode?: number } = {}): void {
   const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   let mode = opts.mode;
@@ -28,7 +28,7 @@ export function writeFileAtomic(path: string, data: string | Uint8Array, opts: {
   let fd: number | undefined;
   try {
     fd = openSync(tmp, 'wx', mode);
-    fchmodSync(fd, mode); // open() aplica umask; o modo final tem que ser o pedido
+    fchmodSync(fd, mode); // open() applies umask; the final mode must be the requested one
     let off = 0;
     while (off < buf.length) off += writeSync(fd, buf, off, buf.length - off);
     fsyncSync(fd);
@@ -37,9 +37,9 @@ export function writeFileAtomic(path: string, data: string | Uint8Array, opts: {
     renameSync(tmp, path);
   } catch (err) {
     if (fd !== undefined) {
-      try { closeSync(fd); } catch { /* ja fechado */ }
+      try { closeSync(fd); } catch { /* already closed */ }
     }
-    try { unlinkSync(tmp); } catch { /* tmp pode nao existir */ }
+    try { unlinkSync(tmp); } catch { /* tmp may not exist */ }
     throw err;
   }
 }

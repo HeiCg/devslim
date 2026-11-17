@@ -33,7 +33,7 @@ const SETTINGS_ORDER = [
   'global/activity_manager_constants',
 ];
 
-test('ordem dos comandos: settings (get/put), pm list, pm list -d, disables, dexopt, am kill-all', async () => {
+test('command order: settings (get/put), pm list, pm list -d, disables, dexopt, am kill-all', async () => {
   const { fake, adb } = world({ installed: INSTALLED, disabled: ['com.android.printspooler'] });
   await slimRunningDevice(SERIAL, { adb, level: 'standard' });
   const expected: string[] = [];
@@ -52,10 +52,10 @@ test('ordem dos comandos: settings (get/put), pm list, pm list -d, disables, dex
   );
   assert.deepEqual(fake.deviceCommands(), expected);
   const dexopt = fake.exec.calls.find((c) => c.args.includes('bg-dexopt-job'))!;
-  assert.equal(dexopt.opts.timeoutMs, 300_000, 'dexopt com timeout de 5 min');
+  assert.equal(dexopt.opts.timeoutMs, 300_000, 'dexopt with a 5 min timeout');
 });
 
-test('valor anterior salvo para cada setting, inclusive ausente (null)', async () => {
+test('previous value saved for each setting, including absent (null)', async () => {
   const { adb, emu } = world({
     installed: [],
     settings: { 'global/window_animation_scale': '1.0', 'global/auto_sync': '1', 'secure/user_setup_complete': '1', 'global/transition_animation_scale': '' },
@@ -65,7 +65,7 @@ test('valor anterior salvo para cada setting, inclusive ausente (null)', async (
     r.savedSettings.map((s) => [`${s.ns}/${s.key}`, s.previous]),
     [
       ['global/window_animation_scale', '1.0'],
-      ['global/transition_animation_scale', null], // vazio = ausente
+      ['global/transition_animation_scale', null], // empty = absent
       ['global/animator_duration_scale', null],
       ['global/auto_sync', '1'],
       ['secure/stylus_handwriting_enabled', null],
@@ -79,7 +79,7 @@ test('valor anterior salvo para cada setting, inclusive ausente (null)', async (
   assert.equal(emu.settings.get('secure/stylus_handwriting_enabled'), '0');
 });
 
-test('activity_manager_constants preexistente nao e sobrescrito e e relatado', async () => {
+test('preexisting activity_manager_constants is not overwritten and is reported', async () => {
   const { fake, adb, emu } = world({ settings: { 'global/activity_manager_constants': 'max_cached_processes=32' } });
   const r = await slimRunningDevice(SERIAL, { adb, level: 'standard' });
   assert.equal(emu.settings.get('global/activity_manager_constants'), 'max_cached_processes=32');
@@ -87,10 +87,10 @@ test('activity_manager_constants preexistente nao e sobrescrito e e relatado', a
   const out = r.settings.find((s) => s.key === 'activity_manager_constants')!;
   assert.equal(out.status, 'skipped');
   assert.match(out.note!, /max_cached_processes=32/);
-  assert.ok(!r.savedSettings.some((s) => s.key === 'activity_manager_constants'), 'nao entra no state');
+  assert.ok(!r.savedSettings.some((s) => s.key === 'activity_manager_constants'), 'does not go into the state');
 });
 
-test('pacote ja desligado antes de nos nao entra no state; nao instalado e ignorado', async () => {
+test('a package already disabled before us does not go into the state; not installed is ignored', async () => {
   const { adb } = world({ installed: INSTALLED, disabled: ['com.google.android.youtube'] });
   const r = await slimRunningDevice(SERIAL, { adb, level: 'standard' });
   assert.deepEqual(r.alreadyDisabled, ['com.google.android.youtube']);
@@ -98,7 +98,7 @@ test('pacote ja desligado antes de nos nao entra no state; nao instalado e ignor
   assert.ok(!r.disabledPackages.includes('com.google.android.youtube'));
 });
 
-test('falhas nao abortam: pacote, setting e dexopt relatados; o resto segue', async () => {
+test('failures do not abort: package, setting and dexopt reported; the rest continues', async () => {
   const { fake, adb } = world({
     installed: INSTALLED,
     failPackages: ['com.google.android.youtube'],
@@ -109,20 +109,20 @@ test('falhas nao abortam: pacote, setting e dexopt relatados; o resto segue', as
   assert.deepEqual(r.failedPackages.map((f) => f.pkg), ['com.google.android.youtube']);
   assert.deepEqual(r.disabledPackages, ['com.google.android.apps.photos', 'com.android.printspooler']);
   assert.equal(r.settings.find((s) => s.key === 'auto_sync')!.status, 'failed');
-  assert.ok(!r.savedSettings.some((s) => s.key === 'auto_sync'), 'nao mudou: nada a restaurar');
+  assert.ok(!r.savedSettings.some((s) => s.key === 'auto_sync'), 'unchanged: nothing to restore');
   assert.equal(r.dexopt.ok, false);
   assert.equal(r.killAll.ok, true);
   assert.equal(fake.deviceCommands().at(-1), 'shell am kill-all');
 });
 
-test('nenhum comando emitido menciona o APK de bluetooth, settings de bluetooth/location, background_process_limit ou chrome', async () => {
+test('no issued command mentions the bluetooth APK, bluetooth/location settings, background_process_limit or chrome', async () => {
   const { fake, adb } = world({
     installed: [...INSTALLED, 'com.android.bluetoothmidiservice', 'com.android.vending', 'com.google.android.setupwizard'],
   });
   const r = await slimRunningDevice(SERIAL, { adb, level: 'aggressive', capabilities: ['camera', 'location', 'weblogin'] });
   await unslimRunningDevice(SERIAL, { adb, saved: { disabledPackages: r.disabledPackages, settings: r.savedSettings } });
   const cmds = fake.deviceCommands();
-  assert.ok(!cmds.some((c) => /location|gps/i.test(c)), 'slim nunca toca location, com ou sem a capacidade');
+  assert.ok(!cmds.some((c) => /location|gps/i.test(c)), 'slim never touches location, with or without the capability');
   assert.ok(cmds.length > 20);
   for (const c of cmds) {
     assert.doesNotMatch(c, /com\.android\.chrome/, c);
@@ -130,7 +130,7 @@ test('nenhum comando emitido menciona o APK de bluetooth, settings de bluetooth/
     assert.doesNotMatch(c, /settings \w+ \w+ \S*(bluetooth|location)/i, c);
     assert.doesNotMatch(c, /background_process_limit/, c);
   }
-  // Unica mencao a "bluetooth": o servico MIDI da lista gerida do T1.
+  // The only mention of "bluetooth": the MIDI service from the T1 managed list.
   const bt = [...new Set(cmds.filter((c) => /bluetooth/i.test(c)))];
   assert.deepEqual(bt, [
     'shell pm disable-user --user 0 com.android.bluetoothmidiservice',
@@ -138,7 +138,7 @@ test('nenhum comando emitido menciona o APK de bluetooth, settings de bluetooth/
   ]);
 });
 
-test('unslim reabilita so o que esta no state e faz delete no setting que era ausente', async () => {
+test('unslim re-enables only what is in the state and deletes the setting that was absent', async () => {
   const { fake, adb, emu } = world({
     installed: INSTALLED,
     disabled: ['com.google.android.youtube', 'com.google.android.apps.photos'],
@@ -147,7 +147,7 @@ test('unslim reabilita so o que esta no state e faz delete no setting que era au
   const r = await unslimRunningDevice(SERIAL, {
     adb,
     saved: {
-      disabledPackages: ['com.google.android.apps.photos', 'com.example.fora-da-lista'],
+      disabledPackages: ['com.google.android.apps.photos', 'com.example.not-in-list'],
       settings: [
         { ns: 'global', key: 'window_animation_scale', previous: '1.0' },
         { ns: 'global', key: 'device_provisioned', previous: null },
@@ -160,14 +160,14 @@ test('unslim reabilita so o que esta no state e faz delete no setting que era au
     'shell settings put global window_animation_scale 1.0',
   ]);
   assert.deepEqual(r.enabled, ['com.google.android.apps.photos']);
-  assert.ok(emu.disabled.has('com.google.android.youtube'), 'pacote fora do state continua desligado');
+  assert.ok(emu.disabled.has('com.google.android.youtube'), 'package outside the state stays disabled');
   assert.equal(emu.settings.get('global/window_animation_scale'), '1.0');
   assert.equal(emu.settings.has('global/device_provisioned'), false);
-  assert.equal(emu.settings.get('global/auto_sync'), '0', 'setting fora do state intocado');
+  assert.equal(emu.settings.get('global/auto_sync'), '0', 'setting outside the state untouched');
   assert.deepEqual(r.remaining, { disabledPackages: [], settings: [] });
 });
 
-test('unslim: falha fica em remaining para nova tentativa', async () => {
+test('unslim: failure stays in remaining for another attempt', async () => {
   const { adb } = world({ installed: INSTALLED, failPackages: ['com.android.printspooler'], failSettings: ['global/auto_sync'] });
   const r = await unslimRunningDevice(SERIAL, {
     adb,
@@ -180,7 +180,7 @@ test('unslim: falha fica em remaining para nova tentativa', async () => {
   assert.deepEqual(r.remaining.settings, [{ ns: 'global', key: 'auto_sync', previous: '1' }]);
 });
 
-test('re-bake: o que ja era nosso continua nosso; previous continua o de antes do primeiro bake', async () => {
+test('re-bake: what was already ours stays ours; previous stays the one from before the first bake', async () => {
   const { adb, emu } = world({ installed: INSTALLED });
   const first = await slimRunningDevice(SERIAL, { adb, level: 'standard' });
   assert.ok(emu.disabled.has('com.google.android.youtube'));
@@ -192,11 +192,11 @@ test('re-bake: o que ja era nosso continua nosso; previous continua o de antes d
   assert.deepEqual([...second.disabledPackages].sort(), [...first.disabledPackages].sort());
   assert.deepEqual(second.alreadyDisabled, []);
   assert.deepEqual(second.newlyDisabled, []);
-  assert.deepEqual(second.savedSettings, first.savedSettings, 'previous nao vira o 0 que nos mesmos gravamos');
+  assert.deepEqual(second.savedSettings, first.savedSettings, 'previous does not become the 0 we wrote ourselves');
   assert.equal(second.settings.find((s) => s.key === 'activity_manager_constants')!.status, 'set');
 });
 
-test('re-bake com capacidade nova religa o que saiu do plano', async () => {
+test('re-bake with a new capability re-enables what left the plan', async () => {
   const { adb, emu } = world({ installed: [...INSTALLED, 'com.android.camera2'] });
   const first = await slimRunningDevice(SERIAL, { adb, level: 'standard' });
   assert.ok(first.disabledPackages.includes('com.android.camera2'));
@@ -211,7 +211,7 @@ test('re-bake com capacidade nova religa o que saiu do plano', async () => {
   assert.ok(!emu.disabled.has('com.android.camera2'));
 });
 
-test('Gboard: bake standard nao toca; aggressive desliga; re-bake com keyboard religa; unslim devolve', async () => {
+test('Gboard: standard bake leaves it; aggressive disables it; re-bake with keyboard re-enables it; unslim restores it', async () => {
   const GBOARD = 'com.google.android.inputmethod.latin';
   const { adb, emu } = world({ installed: [...INSTALLED, GBOARD] });
   const std = await slimRunningDevice(SERIAL, { adb, level: 'standard' });
@@ -231,7 +231,7 @@ test('Gboard: bake standard nao toca; aggressive desliga; re-bake com keyboard r
   assert.deepEqual(kept.reenabled, [GBOARD]);
   assert.ok(!emu.disabled.has(GBOARD));
 
-  // unslim com o state do bake aggressive religa o Gboard
+  // unslim with the aggressive bake state re-enables Gboard
   emu.disabled.add(GBOARD);
   const un = await unslimRunningDevice(SERIAL, { adb, saved: { disabledPackages: agg.disabledPackages, settings: [] } });
   assert.ok(un.enabled.includes(GBOARD));

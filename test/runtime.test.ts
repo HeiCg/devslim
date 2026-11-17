@@ -30,7 +30,7 @@ beforeEach(() => {
   writeFileSync(join(avdHome, `${AVD}.ini`), `path=${avdDir}\n`);
   writeFileSync(join(avdDir, 'config.ini'), PHONE);
   stderr = [];
-  running = join(root, 'avd-running'); // nao existe ate o teste criar
+  running = join(root, 'avd-running'); // does not exist until the test creates it
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
@@ -49,7 +49,7 @@ function world(opts: FakeAndroidOptions = {}) {
     arch: fake.arch,
     stderr: (t: string) => { stderr.push(t); },
     runningDir: running,
-    pidAlive: (_pid: number) => true, // pid_<pid>.ini dos testes de anuncio = emulador vivo
+    pidAlive: (_pid: number) => true, // pid_<pid>.ini in the advertisement tests = live emulator
   };
   return { fake, env, ctx };
 }
@@ -62,7 +62,7 @@ const BASE_ARGS = [
 
 const INSTALLED = ['com.google.android.youtube', 'com.google.android.apps.photos', 'com.android.chrome', 'com.example.app'];
 
-test('up sem slim_base: -no-snapshot, -port sempre, log em $DEVSLIM_HOME/logs, sessao registrada', async () => {
+test('up without slim_base: -no-snapshot, -port always, log in $DEVSLIM_HOME/logs, session recorded', async () => {
   const { fake, ctx, env } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), ctx);
   assert.equal(fake.spawnCalls.length, 1);
@@ -77,11 +77,11 @@ test('up sem slim_base: -no-snapshot, -port sempre, log em $DEVSLIM_HOME/logs, s
   assert.equal(r.alreadyRunning, false);
   assert.equal(r.pid, fake.emulators.get('emulator-5554')!.pid);
   assert.deepEqual(loadSession(env).map((e) => [e.platform, e.avd, e.serial, e.pid, e.port]), [['android', AVD, 'emulator-5554', r.pid, 5554]]);
-  assert.ok(fake.exec.calls.some((c) => c.args.join(' ') === '-s emulator-5554 shell getprop sys.boot_completed'), 'esperou o boot');
-  assert.ok(fake.exec.calls.some((c) => c.cmd === 'sysctl'), 'checou swap');
+  assert.ok(fake.exec.calls.some((c) => c.args.join(' ') === '-s emulator-5554 shell getprop sys.boot_completed'), 'waited for boot');
+  assert.ok(fake.exec.calls.some((c) => c.cmd === 'sysctl'), 'checked swap');
 });
 
-test('up com snapshots/slim_base: -snapshot slim_base -no-snapshot-save, -port presente', async () => {
+test('up with snapshots/slim_base: -snapshot slim_base -no-snapshot-save, -port present', async () => {
   mkdirSync(join(avdDir, 'snapshots', 'slim_base'), { recursive: true });
   const { fake, ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile({ port: 5558 }), ctx);
@@ -93,33 +93,33 @@ test('up com snapshots/slim_base: -snapshot slim_base -no-snapshot-save, -port p
   assert.equal(r.serial, 'emulator-5558');
 });
 
-test('pickFreePort: primeira par livre a partir de 5554', () => {
+test('pickFreePort: first free even port from 5554 on', () => {
   assert.equal(pickFreePort([]), 5554);
   assert.equal(pickFreePort([{ serial: 'emulator-5554', state: 'device' }, { serial: 'emulator-5556', state: 'offline' }]), 5558);
   assert.equal(pickFreePort([{ serial: 'emulator-5556', state: 'device' }, { serial: 'R58M', state: 'device' }]), 5554);
-  assert.equal(pickFreePort([{ serial: 'emulator-5555', state: 'device' }]), 5556, 'porta impar ocupa o par');
+  assert.equal(pickFreePort([{ serial: 'emulator-5555', state: 'device' }]), 5556, 'odd port takes the pair');
 });
 
-test('up com --force escolhe porta livre segundo adb devices', async () => {
-  const { fake, ctx } = world({ emulators: [{ avd: 'outro', port: 5554 }, { avd: 'mais-um', port: 5556 }] });
+test('up with --force picks a free port according to adb devices', async () => {
+  const { fake, ctx } = world({ emulators: [{ avd: 'other', port: 5554 }, { avd: 'one-more', port: 5556 }] });
   const r = await upAvd(AVD, buildAndroidProfile(), { ...ctx, force: true });
   assert.equal(r.port, 5558);
   const args = fake.spawnCalls[0].args;
   assert.equal(args[args.indexOf('-port') + 1], '5558');
 });
 
-test('up recusa com outro emulador rodando (guarda) e nao sobe nada', async () => {
-  const { fake, ctx } = world({ emulators: [{ avd: 'outro', port: 5554 }] });
-  await assert.rejects(upAvd(AVD, buildAndroidProfile(), ctx), /up recusado: .*emulator-5554/);
+test('up refuses with another emulator running (guard) and starts nothing', async () => {
+  const { fake, ctx } = world({ emulators: [{ avd: 'other', port: 5554 }] });
+  await assert.rejects(upAvd(AVD, buildAndroidProfile(), ctx), /up refused: .*emulator-5554/);
   assert.equal(fake.spawnCalls.length, 0);
 });
 
-test('up com porta explicita ocupada da erro', async () => {
-  const { ctx } = world({ emulators: [{ avd: 'outro', port: 5556 }] });
-  await assert.rejects(upAvd(AVD, buildAndroidProfile({ port: 5556 }), { ...ctx, force: true }), /porta 5556 ja em uso/);
+test('up with an explicit busy port errors', async () => {
+  const { ctx } = world({ emulators: [{ avd: 'other', port: 5556 }] });
+  await assert.rejects(upAvd(AVD, buildAndroidProfile({ port: 5556 }), { ...ctx, force: true }), /port 5556 already in use/);
 });
 
-test('up com o AVD ja rodando: nao sobe outro, devolve o existente', async () => {
+test('up with the AVD already running: does not start another, returns the existing one', async () => {
   const { fake, ctx, env } = world({ emulators: [{ avd: AVD, port: 5556, pid: 777 }] });
   recordSession({ platform: 'android', avd: AVD, serial: 'emulator-5556', pid: 777, port: 5556, startedAt: 'x' }, env);
   const r = await upAvd(AVD, buildAndroidProfile(), ctx);
@@ -130,11 +130,11 @@ test('up com o AVD ja rodando: nao sobe outro, devolve o existente', async () =>
   );
 });
 
-test('up: boot que nao termina vira erro com log e dica de down; sessao fica registrada', async () => {
+test('up: a boot that never finishes becomes an error with log and down hint; session stays recorded', async () => {
   const { ctx, env } = world({ spawned: { neverBoots: true } });
   await assert.rejects(upAvd(AVD, buildAndroidProfile(), { ...ctx, bootTimeoutMs: 6000, pollMs: 2000 }), (err: unknown) => {
     assert.ok(err instanceof DevslimError);
-    assert.match(err.message, /nao terminou o boot em 6 s/);
+    assert.match(err.message, /did not finish booting within 6 s/);
     assert.match(err.message, /logs\/slim-api35\.log/);
     assert.match(err.message, /devslim android down slim-api35/);
     return true;
@@ -144,7 +144,7 @@ test('up: boot que nao termina vira erro com log e dica de down; sessao fica reg
 
 const swapAt = (pct: number) => `total = 1000.00M  used = ${pct * 10}.00M  free = ${1000 - pct * 10}.00M  (encrypted)`;
 
-test('swap no up: 79% sem aviso; 85% avisa e boota', async () => {
+test('swap on up: 79% no warning; 85% warns and boots', async () => {
   const low = world({ swap: swapAt(79) });
   await upAvd(AVD, buildAndroidProfile(), low.ctx);
   assert.equal(low.fake.spawnCalls.length, 1);
@@ -153,14 +153,14 @@ test('swap no up: 79% sem aviso; 85% avisa e boota', async () => {
   const mid = world({ swap: swapAt(85) });
   await upAvd(AVD, buildAndroidProfile(), mid.ctx);
   assert.equal(mid.fake.spawnCalls.length, 1);
-  assert.match(stderr.join(''), /^devslim: aviso: swap em 85% \(850 de 1000 MB\): acima de 80%$/m);
+  assert.match(stderr.join(''), /^devslim: warning: swap at 85% \(850 of 1000 MB\): above 80%$/m);
 });
 
-test('swap no up: 96% recusa sem --force (nada sobe, sessao vazia); com --force boota e avisa', async () => {
+test('swap on up: 96% refuses without --force (nothing starts, empty session); with --force boots and warns', async () => {
   const hi = world({ swap: swapAt(96) });
   await assert.rejects(upAvd(AVD, buildAndroidProfile(), hi.ctx), (err: unknown) => {
     assert.ok(err instanceof DevslimError);
-    assert.equal(err.message, 'up recusado: swap em 96% (960 de 1000 MB): nao boote device agora; feche apps, sessoes e devices ociosos antes de subir device (--force para bootar mesmo assim)');
+    assert.equal(err.message, 'up refused: swap at 96% (960 of 1000 MB): do not boot a device now; close idle apps, sessions and devices before starting a device (--force to boot anyway)');
     return true;
   });
   assert.equal(hi.fake.spawnCalls.length, 0);
@@ -170,42 +170,42 @@ test('swap no up: 96% recusa sem --force (nada sobe, sessao vazia); com --force 
   const r = await upAvd(AVD, buildAndroidProfile(), { ...forced.ctx, force: true });
   assert.equal(r.alreadyRunning, false);
   assert.equal(forced.fake.spawnCalls.length, 1);
-  assert.match(stderr.join(''), /aviso: swap em 96% .*--force: bootando mesmo assim/);
+  assert.match(stderr.join(''), /warning: swap at 96% .*--force: booting anyway/);
 });
 
-test('swap no up: AVD ja rodando a 96% nao e bloqueado', async () => {
+test('swap on up: AVD already running at 96% is not blocked', async () => {
   const { fake, ctx } = world({ swap: swapAt(96), emulators: [{ avd: AVD, port: 5554 }] });
   const r = await upAvd(AVD, buildAndroidProfile(), ctx);
   assert.equal(r.alreadyRunning, true);
   assert.equal(fake.spawnCalls.length, 0);
 });
 
-test('swap no bake: 96% recusa sem --force com a mesma mensagem', async () => {
+test('swap on bake: 96% refuses without --force with the same message', async () => {
   const { fake, ctx, env } = world({ swap: swapAt(96) });
   tuneAvd(AVD, buildAndroidProfile(), { env });
-  await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), ctx), /^DevslimError: bake recusado: swap em 96% \(960 de 1000 MB\): nao boote device agora; .*--force para bootar mesmo assim/);
+  await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), ctx), /^DevslimError: bake refused: swap at 96% \(960 of 1000 MB\): do not boot a device now; .*--force to boot anyway/);
   assert.equal(fake.spawnCalls.length, 0);
 });
 
-test('bake sem state de tune da erro mandando rodar tune', async () => {
+test('bake without tune state errors telling you to run tune', async () => {
   const { fake, ctx } = world();
-  await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), ctx), /ainda nao foi tunado; rode antes: devslim android tune slim-api35/);
+  await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), ctx), /has not been tuned yet; run first: devslim android tune slim-api35/);
   assert.equal(fake.spawnCalls.length, 0);
 });
 
-test('bake recusa AVD rodando', async () => {
+test('bake refuses a running AVD', async () => {
   const { ctx, env } = world({ emulators: [{ avd: AVD, port: 5554 }] });
   tuneAvd(AVD, buildAndroidProfile(), { env });
-  await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), ctx), /esta rodando \(emulator-5554\); desligue antes do bake/);
+  await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), ctx), /is running \(emulator-5554\); shut it down before bake/);
 });
 
-test('up grava lastLaunch {ramMb, lowRam, at} no state do AVD tunado; AVD sem state nao ganha state', async () => {
+test('up writes lastLaunch {ramMb, lowRam, at} to the tuned AVD state; an AVD without state gets none', async () => {
   const { ctx, env } = world();
-  tuneAvd(AVD, buildAndroidProfile(), { env }); // perfil 2048
-  await upAvd(AVD, buildAndroidProfile({ ramMb: 4096 }), ctx); // up --ram 4096 sem tune
+  tuneAvd(AVD, buildAndroidProfile(), { env }); // profile 2048
+  await upAvd(AVD, buildAndroidProfile({ ramMb: 4096 }), ctx); // up --ram 4096 without tune
   const st = loadState<AndroidState>('android', AVD, { env })!;
   assert.deepEqual(st.lastLaunch, { ramMb: 4096, lowRam: false, at: '2026-11-16T12:00:00.000Z' });
-  assert.equal(st.profile.ramMb, 2048, 'perfil do tune intacto');
+  assert.equal(st.profile.ramMb, 2048, 'tune profile intact');
   assert.equal(typeof st.originalConfigIni, 'string');
 
   const other = world();
@@ -218,29 +218,29 @@ test('up grava lastLaunch {ramMb, lowRam, at} no state do AVD tunado; AVD sem st
   assert.equal(loadState('android', 'fresh-api35', { env: other.env }), null);
 });
 
-test('bake grava lastLaunch; re-tune que reescreve o config.ini descarta, re-tune sem mudanca mantem', async () => {
+test('bake writes lastLaunch; a re-tune that rewrites config.ini drops it, a re-tune without changes keeps it', async () => {
   const { ctx, env } = world();
   tuneAvd(AVD, buildAndroidProfile(), { env });
   await bakeAvd(AVD, buildAndroidProfile({ lowRam: true }), ctx);
   const baked = loadState<AndroidState>('android', AVD, { env })!;
   assert.deepEqual(baked.lastLaunch, { ramMb: 2048, lowRam: true, at: '2026-11-16T12:00:00.000Z' });
-  assert.equal(baked.bakedAt, '2026-11-16T12:00:00.000Z', 'state do bake junto');
+  assert.equal(baked.bakedAt, '2026-11-16T12:00:00.000Z', 'bake state along with it');
 
-  tuneAvd(AVD, buildAndroidProfile(), { env }); // mesmo perfil: nada escrito
+  tuneAvd(AVD, buildAndroidProfile(), { env }); // same profile: nothing written
   assert.deepEqual(loadState<AndroidState>('android', AVD, { env })!.lastLaunch, baked.lastLaunch);
-  tuneAvd(AVD, buildAndroidProfile({ ramMb: 3072 }), { env }); // reescreve e apaga o hardware-qemu.ini
+  tuneAvd(AVD, buildAndroidProfile({ ramMb: 3072 }), { env }); // rewrites and deletes hardware-qemu.ini
   assert.equal(loadState<AndroidState>('android', AVD, { env })!.lastLaunch, undefined);
 });
 
-test('bake: sobe sem snapshot, enxuga, grava state, snapshot slim_base, emu kill, espera sair', async () => {
+test('bake: starts without snapshot, slims, writes state, slim_base snapshot, emu kill, waits for exit', async () => {
   const { fake, ctx, env } = world({
     spawned: { installed: INSTALLED, disabled: ['com.google.android.youtube'], bootSteps: 2, settings: { 'global/auto_sync': '1' } },
   });
   tuneAvd(AVD, buildAndroidProfile(), { env });
-  mkdirSync(join(avdDir, 'snapshots', 'slim_base'), { recursive: true }); // snapshot antigo: bake ignora
+  mkdirSync(join(avdDir, 'snapshots', 'slim_base'), { recursive: true }); // old snapshot: bake ignores it
   const r = await bakeAvd(AVD, buildAndroidProfile(), ctx);
 
-  assert.deepEqual(fake.spawnCalls[0].args, [...BASE_ARGS, '-no-snapshot'], 'bake nunca carrega snapshot');
+  assert.deepEqual(fake.spawnCalls[0].args, [...BASE_ARGS, '-no-snapshot'], 'bake never loads a snapshot');
   const cmds = fake.deviceCommands();
   const idx = (s: string) => cmds.indexOf(s);
   assert.ok(idx('shell getprop sys.boot_completed') < idx('shell settings get global window_animation_scale'));
@@ -248,24 +248,24 @@ test('bake: sobe sem snapshot, enxuga, grava state, snapshot slim_base, emu kill
   assert.ok(idx('shell pm disable-user --user 0 com.google.android.apps.photos') < idx('shell cmd package bg-dexopt-job'));
   assert.ok(idx('shell am kill-all') < idx('emu avd snapshot save slim_base'));
   assert.equal(cmds.at(-1), 'emu kill');
-  assert.equal(fake.emulators.size, 0, 'emulador desligado');
+  assert.equal(fake.emulators.size, 0, 'emulator shut down');
 
   const state = loadState<AndroidState>('android', AVD, { env })!;
-  assert.deepEqual(state.disabledPackages, ['com.google.android.apps.photos'], 'youtube ja estava desligado: fora do state');
+  assert.deepEqual(state.disabledPackages, ['com.google.android.apps.photos'], 'youtube was already disabled: not in the state');
   assert.equal(state.settings!.find((s) => s.key === 'auto_sync')!.previous, '1');
   assert.equal(state.settings!.find((s) => s.key === 'window_animation_scale')!.previous, null);
   assert.equal(state.bakedAt, '2026-11-16T12:00:00.000Z');
-  assert.equal(typeof state.originalConfigIni, 'string', 'backup do tune intacto');
+  assert.equal(typeof state.originalConfigIni, 'string', 'tune backup intact');
 
-  assert.deepEqual(loadSession(env), [], 'sessao do bake limpa');
+  assert.deepEqual(loadSession(env), [], 'bake session cleaned');
   assert.ok(existsSync(join(avdDir, 'snapshots', 'slim_base', 'ram.bin')));
   assert.equal(r.snapshot, 'slim_base');
   assert.equal(r.level, 'standard');
   for (const k of ['bootMs', 'slimMs', 'snapshotMs', 'shutdownMs', 'totalMs'] as const) assert.equal(typeof r.timings[k], 'number', k);
-  assert.ok(r.timings.bootMs >= 2000, 'boot com 2 polls de 2 s no relogio falso');
+  assert.ok(r.timings.bootMs >= 2000, 'boot with 2 polls of 2 s on the fake clock');
 });
 
-test('bake: falha no snapshot derruba o emulador e propaga o erro; state ja gravado', async () => {
+test('bake: a snapshot failure takes the emulator down and propagates the error; state already written', async () => {
   const { fake, ctx, env } = world({ spawned: { installed: INSTALLED } });
   tuneAvd(AVD, buildAndroidProfile(), { env });
   const original = fake.exec;
@@ -274,79 +274,79 @@ test('bake: falha no snapshot derruba o emulador e propaga o erro; state ja grav
       args.includes('snapshot') ? { code: 0, signal: null, stdout: 'KO: snapshot save failed\r\n', stderr: '' } : original(cmd, args, o),
     { calls: original.calls },
   );
-  await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), { ...ctx, exec: failing }), /snapshot save slim_base .*falhou/);
-  assert.equal(fake.emulators.size, 0, 'emulador do bake nao fica vivo');
+  await assert.rejects(bakeAvd(AVD, buildAndroidProfile(), { ...ctx, exec: failing }), /snapshot save slim_base .*failed/);
+  assert.equal(fake.emulators.size, 0, 'bake emulator does not stay alive');
   assert.deepEqual(loadState<AndroidState>('android', AVD, { env })!.disabledPackages, [
     'com.google.android.apps.photos',
     'com.google.android.youtube',
   ]);
 });
 
-test('down sem argumento: so mata o registrado na sessao', async () => {
-  const { fake, ctx, env } = world({ emulators: [{ avd: AVD, port: 5554 }, { avd: 'do-dono', port: 5556 }] });
+test('down without argument: only kills what is recorded in the session', async () => {
+  const { fake, ctx, env } = world({ emulators: [{ avd: AVD, port: 5554 }, { avd: 'owners', port: 5556 }] });
   recordSession({ platform: 'android', avd: AVD, serial: 'emulator-5554', pid: 1, port: 5554, startedAt: 'x' }, env);
   const r = await downAvd(undefined, ctx);
   assert.deepEqual(r.map((x) => [x.avd, x.result]), [[AVD, 'killed']]);
-  assert.deepEqual([...fake.emulators.keys()], ['emulator-5556'], 'emulador do dono intocado');
+  assert.deepEqual([...fake.emulators.keys()], ['emulator-5556'], 'owner emulator untouched');
   assert.ok(!fake.exec.calls.some((c) => c.args.join(' ') === '-s emulator-5556 emu kill'));
   assert.deepEqual(loadSession(env), []);
 });
 
-test('down <avd> nao registrado: recusa sem --force; com --force mata', async () => {
-  const { fake, ctx } = world({ emulators: [{ avd: 'do-dono', port: 5556 }] });
-  await assert.rejects(downAvd('do-dono', ctx), /nao foi subido pelo devslim .*--force/);
+test('down <avd> not recorded: refuses without --force; with --force kills', async () => {
+  const { fake, ctx } = world({ emulators: [{ avd: 'owners', port: 5556 }] });
+  await assert.rejects(downAvd('owners', ctx), /was not started by devslim .*--force/);
   assert.equal(fake.emulators.size, 1);
-  const r = await downAvd('do-dono', { ...ctx, force: true });
-  assert.deepEqual(r.map((x) => [x.avd, x.serial, x.registered, x.result]), [['do-dono', 'emulator-5556', false, 'killed']]);
+  const r = await downAvd('owners', { ...ctx, force: true });
+  assert.deepEqual(r.map((x) => [x.avd, x.serial, x.registered, x.result]), [['owners', 'emulator-5556', false, 'killed']]);
   assert.equal(fake.emulators.size, 0);
 });
 
-test('down: entrada velha (serial sumiu) e serial reaproveitado por outro AVD nao matam nada', async () => {
-  const { fake, ctx, env } = world({ emulators: [{ avd: 'do-dono', port: 5556 }] });
+test('down: old entry (serial gone) and a serial reused by another AVD kill nothing', async () => {
+  const { fake, ctx, env } = world({ emulators: [{ avd: 'owners', port: 5556 }] });
   recordSession({ platform: 'android', avd: AVD, serial: 'emulator-5554', pid: 1, port: 5554, startedAt: 'x' }, env);
-  recordSession({ platform: 'android', avd: 'velho', serial: 'emulator-5556', pid: 2, port: 5556, startedAt: 'x' }, env);
+  recordSession({ platform: 'android', avd: 'old', serial: 'emulator-5556', pid: 2, port: 5556, startedAt: 'x' }, env);
   const r = await downAvd(undefined, ctx);
-  assert.deepEqual(r.map((x) => [x.avd, x.result]), [[AVD, 'stale'], ['velho', 'skipped']]);
-  assert.equal(fake.emulators.size, 1, 'emulator-5556 roda do-dono: intocado');
+  assert.deepEqual(r.map((x) => [x.avd, x.result]), [[AVD, 'stale'], ['old', 'skipped']]);
+  assert.equal(fake.emulators.size, 1, 'emulator-5556 runs owners: untouched');
   assert.deepEqual(loadSession(env), []);
 });
 
-test('down sem nada na sessao: lista vazia', async () => {
+test('down with nothing in the session: empty list', async () => {
   const { ctx } = world();
   assert.deepEqual(await downAvd(undefined, ctx), []);
 });
 
-test('create recusa nome existente sem chamar avdmanager', async () => {
+test('create refuses an existing name without calling avdmanager', async () => {
   const { fake, ctx } = world();
-  await assert.rejects(createAvd(AVD, ctx), /AVD slim-api35 ja existe/);
+  await assert.rejects(createAvd(AVD, ctx), /AVD slim-api35 already exists/);
   assert.equal(fake.exec.calls.length, 0);
 });
 
-test('create: avdmanager com args exatos e "no" no stdin; aplica tune com 720x1600@320; nao boota', async () => {
+test('create: avdmanager with exact args and "no" on stdin; applies tune with 720x1600@320; does not boot', async () => {
   const { fake, ctx, env } = world();
-  const r = await createAvd('novo-api35', ctx);
+  const r = await createAvd('new-api35', ctx);
   assert.deepEqual(fake.exec.calls.map((c) => [c.cmd, ...c.args]), [
-    [fake.tools.avdmanager, 'create', 'avd', '-n', 'novo-api35', '-k', 'system-images;android-35;google_apis;arm64-v8a', '-d', 'pixel_7'],
+    [fake.tools.avdmanager, 'create', 'avd', '-n', 'new-api35', '-k', 'system-images;android-35;google_apis;arm64-v8a', '-d', 'pixel_7'],
   ]);
   assert.equal(fake.exec.calls[0].opts.input, 'no\n');
-  assert.equal(fake.spawnCalls.length, 0, 'nao boota');
-  const config = readFileSync(join(avdHome, 'novo-api35.avd', 'config.ini'), 'utf8');
+  assert.equal(fake.spawnCalls.length, 0, 'does not boot');
+  const config = readFileSync(join(avdHome, 'new-api35.avd', 'config.ini'), 'utf8');
   assert.match(config, /^hw\.lcd\.width=720$/m);
   assert.match(config, /^hw\.lcd\.height=1600$/m);
   assert.match(config, /^hw\.lcd\.density=320$/m);
   assert.match(config, /^hw\.ramSize=2048$/m);
   assert.equal(r.image, 'system-images;android-35;google_apis;arm64-v8a');
-  const state = loadState<AndroidState>('android', 'novo-api35', { env })!;
+  const state = loadState<AndroidState>('android', 'new-api35', { env })!;
   assert.match(state.originalConfigIni, /hw\.lcd\.width=1080/);
 });
 
-test('create com --image/--device e falha do avdmanager', async () => {
+test('create with --image/--device and avdmanager failure', async () => {
   const { fake, ctx } = world({ avdmanagerFails: true, systemImages: ['system-images;android-34;google_apis;arm64-v8a'] });
-  await assert.rejects(createAvd('x-api34', { ...ctx, image: 'system-images;android-34;google_apis;arm64-v8a', device: 'pixel_6' }), /avdmanager create avd x-api34 falhou \(exit 1\)/);
+  await assert.rejects(createAvd('x-api34', { ...ctx, image: 'system-images;android-34;google_apis;arm64-v8a', device: 'pixel_6' }), /avdmanager create avd x-api34 failed \(exit 1\)/);
   assert.deepEqual(fake.exec.calls[0].args.slice(-4), ['-k', 'system-images;android-34;google_apis;arm64-v8a', '-d', 'pixel_6']);
 });
 
-test('create com atalho: --image aosp_atd/google_atd/default e --api expandem com a ABI do host', async () => {
+test('create with shortcut: --image aosp_atd/google_atd/default and --api expand with the host ABI', async () => {
   const images = ['system-images;android-35;aosp_atd;arm64-v8a', 'system-images;android-34;google_atd;arm64-v8a', 'system-images;android-35;default;x86_64'];
   const { fake, ctx } = world({ systemImages: images });
   const a = await createAvd('atd-api35', { ...ctx, image: 'aosp_atd' });
@@ -359,34 +359,34 @@ test('create com atalho: --image aosp_atd/google_atd/default e --api expandem co
   assert.match(readFileSync(join(avdHome, 'atd-api35.avd', 'config.ini'), 'utf8'), /^tag\.id=aosp_atd$/m);
 });
 
-test('create sem imagem em host x86_64: google_apis x86_64', async () => {
+test('create without image on an x86_64 host: google_apis x86_64', async () => {
   const { fake, ctx } = world();
   const r = await createAvd('x86-api35', { ...ctx, arch: 'x64' });
   assert.equal(r.image, 'system-images;android-35;google_apis;x86_64');
   assert.equal(fake.exec.calls[0].args[fake.exec.calls[0].args.indexOf('-k') + 1], 'system-images;android-35;google_apis;x86_64');
 });
 
-test('create com imagem nao instalada: erro com o comando sdkmanager exato, sem chamar avdmanager nem baixar', async () => {
+test('create with an image not installed: error with the exact sdkmanager command, without calling avdmanager or downloading', async () => {
   const { fake, ctx } = world({ systemImages: [] });
   await assert.rejects(
     createAvd('atd-api35', { ...ctx, image: 'aosp_atd' }),
     (e: Error) =>
-      e.message.includes('imagem system-images;android-35;aosp_atd;arm64-v8a nao instalada') &&
+      e.message.includes('image system-images;android-35;aosp_atd;arm64-v8a not installed') &&
       e.message.includes(join(fake.sdk, 'system-images', 'android-35', 'aosp_atd', 'arm64-v8a')) &&
       e.message.includes('sdkmanager "system-images;android-35;aosp_atd;arm64-v8a"'),
   );
-  // id completo tambem e conferido
+  // a full id is checked too
   await assert.rejects(createAvd('full', { ...ctx, image: 'system-images;android-33;google_apis;arm64-v8a' }), /sdkmanager "system-images;android-33;google_apis;arm64-v8a"/);
-  assert.equal(fake.exec.calls.length, 0, 'nem avdmanager nem sdkmanager');
+  assert.equal(fake.exec.calls.length, 0, 'neither avdmanager nor sdkmanager');
   assert.ok(!existsSync(join(avdHome, 'atd-api35.avd')));
 });
 
-test('SDK ausente: erro dizendo qual binario e onde procurou', async () => {
+test('missing SDK: error saying which binary and where it looked', async () => {
   const { ctx } = world();
-  await assert.rejects(upAvd(AVD, buildAndroidProfile(), { ...ctx, fileExists: () => false }), /adb nao encontrado; procurado em: .*platform-tools\/adb/);
+  await assert.rejects(upAvd(AVD, buildAndroidProfile(), { ...ctx, fileExists: () => false }), /adb not found; looked in: .*platform-tools\/adb/);
 });
 
-// Emulador falso que, ao "subir", escreve o que o real escreve: hardware-qemu.ini e/ou log.
+// Fake emulator that, on "start", writes what the real one writes: hardware-qemu.ini and/or log.
 function emulatorWrites(ctx: ReturnType<typeof world>['ctx'], w: { hwIni?: string; log?: string }) {
   return {
     ...ctx,
@@ -398,26 +398,26 @@ function emulatorWrites(ctx: ReturnType<typeof world>['ctx'], w: { hwIni?: strin
   };
 }
 
-test('up: RAM efetiva do hardware-qemu.ini maior que a pedida avisa em stderr com os dois valores e sugere --lowram', async () => {
+test('up: effective RAM from hardware-qemu.ini above the requested one warns on stderr with both values and suggests --lowram', async () => {
   const { ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), emulatorWrites(ctx, { hwIni: 'hw.ramSize = 2560\nhw.gpu.mode = host\nvm.heapSize = 576\n' }));
   assert.equal(r.ramEffectiveMb, 2560);
   const err = stderr.join('');
-  assert.match(err, /aviso: RAM pedida 2048 MB, efetiva 2560 MB \(emulador elevou; -memory 2048 nao vence\)\. /);
-  assert.doesNotMatch(err, /log: /, 'sem linha no log, nada citado');
-  assert.match(err, /O emulador ignora -memory abaixo do piso dele a menos que o lowram esteja ligado\. Com o AVD desligado: devslim android tune slim-api35 --lowram \(o lowram muda o comportamento dos apps: o guest se declara aparelho de pouca RAM\)$/m);
-  assert.doesNotMatch(err, /--screen|tela menor/, 'tela menor nao baixa o piso (medido)');
+  assert.match(err, /warning: RAM requested 2048 MB, effective 2560 MB \(emulator raised it; -memory 2048 does not win\)\. /);
+  assert.doesNotMatch(err, /log: /, 'no log line, nothing quoted');
+  assert.match(err, /The emulator ignores -memory below its floor unless lowram is on\. With the AVD shut down: devslim android tune slim-api35 --lowram \(lowram changes app behavior: the guest reports itself as a low-RAM device\)$/m);
+  assert.doesNotMatch(err, /--screen|smaller screen/, 'a smaller screen does not lower the floor (measured)');
 });
 
-test('up: RAM elevada mesmo com lowram = aviso sem sugerir --lowram de novo', async () => {
+test('up: RAM raised even with lowram = warning without suggesting --lowram again', async () => {
   const { ctx } = world();
   await upAvd(AVD, buildAndroidProfile({ lowRam: true }), emulatorWrites(ctx, { hwIni: 'hw.ramSize = 2560\n' }));
   const err = stderr.join('');
-  assert.match(err, /efetiva 2560 MB \(emulador elevou mesmo com lowram; -memory 2048 nao vence\)/);
+  assert.match(err, /effective 2560 MB \(emulator raised it even with lowram; -memory 2048 does not win\)/);
   assert.doesNotMatch(err, /tune slim-api35 --lowram/);
 });
 
-test('up: aviso de RAM cita a linha do log deste boot quando ha', async () => {
+test('up: RAM warning quotes this boot log line when present', async () => {
   const { ctx } = world();
   const r = await upAvd(
     AVD,
@@ -425,12 +425,12 @@ test('up: aviso de RAM cita a linha do log deste boot quando ha', async () => {
     emulatorWrites(ctx, { hwIni: 'hw.ramSize = 2560\n', log: 'INFO         | Increasing RAM size to 2560MB\n' }),
   );
   assert.equal(r.ramEffectiveMb, 2560);
-  assert.match(stderr.join(''), /\(emulador elevou; -memory 2048 nao vence\); log: "INFO \| Increasing RAM size to 2560MB"\. O emulador ignora/);
+  assert.match(stderr.join(''), /\(emulator raised it; -memory 2048 does not win\); log: "INFO \| Increasing RAM size to 2560MB"\. The emulator ignores/);
 });
 
 const ARGENT_LINE = '/sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd slim-api35 -no-snapshot-load -gpu auto -feature -Vulkan -noaudio -no-boot-anim -netfast -no-metrics -crash-report-mode never';
 
-test('up com o AVD ja rodando fora do perfil (argent, lavapipe): avisa em stderr, nao mata, devolve launcher e gpuEffective', async () => {
+test('up with the AVD already running outside the profile (argent, lavapipe): warns on stderr, does not kill, returns launcher and gpuEffective', async () => {
   writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 4096\nhw.gpu.mode = lavapipe\n');
   const { fake, ctx } = world({ emulators: [{ avd: AVD, port: 5554, pid: 9421 }], host: { pgrep: '9421\n', cmdline: ARGENT_LINE } });
   const r = await upAvd(AVD, buildAndroidProfile(), ctx);
@@ -439,58 +439,58 @@ test('up com o AVD ja rodando fora do perfil (argent, lavapipe): avisa em stderr
   assert.equal(r.gpuEffective, 'lavapipe');
   assert.equal(r.ramEffectiveMb, 4096);
   assert.equal(fake.spawnCalls.length, 0);
-  assert.equal(fake.emulators.size, 1, 'nunca mata sozinho');
+  assert.equal(fake.emulators.size, 1, 'never kills on its own');
   assert.ok(!fake.deviceCommands().includes('emu kill'));
   const err = stderr.join('');
-  assert.match(err, /^devslim: aviso: AVD slim-api35 ja roda fora do perfil \(pid 9421, lancado por argent, gpu efetiva lavapipe \(software\), ram efetiva 4096 MB\); /m);
-  assert.match(err, /nada subido, nada desligado\. Para subir no perfil: devslim android down slim-api35 --force e depois devslim android up slim-api35/);
-  assert.ok(fake.exec.calls.some((c) => c.cmd === 'ps' && c.args.join(' ') === '-o command= -p 9421'), 'linha de comando via ps, sem adb');
+  assert.match(err, /^devslim: warning: AVD slim-api35 is already running outside the profile \(pid 9421, launched by argent, effective gpu lavapipe \(software\), effective ram 4096 MB\); /m);
+  assert.match(err, /nothing started, nothing shut down\. To start it on the profile: devslim android down slim-api35 --force and then devslim android up slim-api35/);
+  assert.ok(fake.exec.calls.some((c) => c.cmd === 'ps' && c.args.join(' ') === '-o command= -p 9421'), 'command line via ps, no adb');
 });
 
-test('up com o AVD ja rodando pelo devslim (sessao, gpu host): sem aviso, launcher devslim', async () => {
+test('up with the AVD already running via devslim (session, gpu host): no warning, devslim launcher', async () => {
   writeFileSync(join(avdDir, 'hardware-qemu.ini'), 'hw.ramSize = 2048\nhw.gpu.mode = host\n');
   const { ctx, env } = world({ emulators: [{ avd: AVD, port: 5556, pid: 777 }] });
   recordSession({ platform: 'android', avd: AVD, serial: 'emulator-5556', pid: 777, port: 5556, startedAt: 'x' }, env);
   const r = await upAvd(AVD, buildAndroidProfile(), ctx);
   assert.deepEqual([r.alreadyRunning, r.launcher, r.gpuEffective, r.pid], [true, 'devslim', 'host', 777]);
-  assert.doesNotMatch(stderr.join(''), /fora do perfil/);
+  assert.doesNotMatch(stderr.join(''), /outside the profile/);
 });
 
-test('up sobe: launcher devslim e gpuEffective no retorno', async () => {
+test('up starts: devslim launcher and gpuEffective in the result', async () => {
   const { ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), emulatorWrites(ctx, { hwIni: 'hw.ramSize = 2048\nhw.gpu.mode = host\n' }));
   assert.deepEqual([r.alreadyRunning, r.launcher, r.gpuEffective], [false, 'devslim', 'host']);
 });
 
-test('up: RAM efetiva igual a pedida nao avisa', async () => {
+test('up: effective RAM equal to requested does not warn', async () => {
   const { ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), emulatorWrites(ctx, { hwIni: 'hw.ramSize = 2048\n' }));
   assert.equal(r.ramEffectiveMb, 2048);
-  assert.doesNotMatch(stderr.join(''), /elevou a RAM/);
+  assert.doesNotMatch(stderr.join(''), /raised it/);
 });
 
-test('up: sem hardware-qemu.ini, RAM efetiva vem da linha do log deste boot (ignora boots anteriores)', async () => {
+test('up: without hardware-qemu.ini, effective RAM comes from this boot log line (ignores earlier boots)', async () => {
   const { ctx } = world();
   mkdirSync(join(devslimHome, 'logs'), { recursive: true });
-  writeFileSync(join(devslimHome, 'logs', `${AVD}.log`), 'INFO         | Increasing RAM size to 4096MB\n'); // boot antigo
+  writeFileSync(join(devslimHome, 'logs', `${AVD}.log`), 'INFO         | Increasing RAM size to 4096MB\n'); // old boot
   const r = await upAvd(AVD, buildAndroidProfile(), emulatorWrites(ctx, { log: 'INFO         | Android emulator version 36.1\nINFO         | Increasing RAM size to 2560MB\n' }));
   assert.equal(r.ramEffectiveMb, 2560);
-  assert.match(stderr.join(''), /RAM pedida 2048 MB, efetiva 2560 MB .*; log: "INFO \| Increasing RAM size to 2560MB"/);
-  assert.doesNotMatch(stderr.join(''), /4096/, 'linha de boot antigo nao e citada');
+  assert.match(stderr.join(''), /RAM requested 2048 MB, effective 2560 MB .*; log: "INFO \| Increasing RAM size to 2560MB"/);
+  assert.doesNotMatch(stderr.join(''), /4096/, 'old boot line is not quoted');
 
   stderr = [];
   const again = world();
   rmSync(join(devslimHome, 'logs'), { recursive: true, force: true });
   const none = await upAvd(AVD, buildAndroidProfile(), again.ctx);
-  assert.equal(none.ramEffectiveMb, null, 'nem ini nem linha no log: desconhecida');
-  assert.doesNotMatch(stderr.join(''), /elevou/);
+  assert.equal(none.ramEffectiveMb, null, 'neither ini nor log line: unknown');
+  assert.doesNotMatch(stderr.join(''), /raised/);
 });
 
-test('up: dica de bake so quando subiu sem slim_base', async () => {
+test('up: bake tip only when started without slim_base', async () => {
   const cold = world();
   const r = await upAvd(AVD, buildAndroidProfile(), cold.ctx);
   assert.equal(r.fromSnapshot, false);
-  assert.equal(r.hint, 'dica: subiu sem snapshot slim_base; rode uma vez devslim android bake slim-api35 (com o AVD desligado) para os proximos up partirem de um guest ja enxuto');
+  assert.equal(r.hint, 'tip: started without the slim_base snapshot; run devslim android bake slim-api35 once (with the AVD shut down) so later ups start from an already slim guest');
 
   mkdirSync(join(avdDir, 'snapshots', 'slim_base'), { recursive: true });
   const warm = world();
@@ -502,11 +502,11 @@ test('up: dica de bake so quando subiu sem slim_base', async () => {
   rmSync(join(avdDir, 'snapshots'), { recursive: true });
   const a = await upAvd(AVD, buildAndroidProfile(), running.ctx);
   assert.equal(a.alreadyRunning, true);
-  assert.ok(!('hint' in a), 'ja rodando: sem dica');
+  assert.ok(!('hint' in a), 'already running: no tip');
 });
 
 // ---------------------------------------------------------------------------
-// anuncio (avd/running/pid_<pid>.ini)
+// advertisement (avd/running/pid_<pid>.ini)
 
 const RUNNING_FIXTURE = readFileSync(new URL('./fixtures/running-pid.ini', import.meta.url), 'utf8');
 
@@ -520,24 +520,24 @@ function announce(o: { pid?: number; avd?: string; serial?: number; grpc?: numbe
 }
 
 const noLeak = (r: unknown) => {
-  assert.ok(!JSON.stringify(r).includes('abc123'), 'token fora do retorno');
+  assert.ok(!JSON.stringify(r).includes('abc123'), 'token not in the result');
   assert.ok(!stderr.join('').includes('abc123'), 'token fora do stderr');
 };
 
-test('up anunciado: advertised true, grpcPort 8554, sem aviso, sem esperar', async () => {
+test('up advertised: advertised true, grpcPort 8554, no warning, no waiting', async () => {
   announce();
   const { fake, ctx } = world();
   const before = fake.sleeps.length;
   const r = await upAvd(AVD, buildAndroidProfile(), ctx);
   assert.equal(r.advertised, true);
   assert.equal(r.grpcPort, 8554);
-  assert.ok(!stderr.join('').includes('nao se anunciou'));
-  assert.ok(fake.sleeps.slice(before).every((ms) => ms !== 500), 'nenhum poll de anuncio');
+  assert.ok(!stderr.join('').includes('did not advertise itself'));
+  assert.ok(fake.sleeps.slice(before).every((ms) => ms !== 500), 'no advertisement poll');
   noLeak(r);
 });
 
-test('up anunciado na porta da instancia: 5556 -> casa a entrada de port.serial 5556', async () => {
-  announce({ serial: 5554, grpc: 8554, pid: 1 }); // outra instancia velha do mesmo AVD
+test('up advertised on the instance port: 5556 -> matches the port.serial 5556 entry', async () => {
+  announce({ serial: 5554, grpc: 8554, pid: 1 }); // another old instance of the same AVD
   announce({ serial: 5556, grpc: 8556, pid: 2 });
   const { fake, ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile({ port: 5556 }), ctx);
@@ -546,48 +546,48 @@ test('up anunciado na porta da instancia: 5556 -> casa a entrada de port.serial 
   assert.deepEqual([r.advertised, r.grpcPort], [true, 8556]);
 });
 
-test('up nao anunciado: espera ate 10 s, avisa em stderr com o diretorio, nao e erro', async () => {
+test('up not advertised: waits up to 10 s, warns on stderr with the directory, not an error', async () => {
   const { fake, ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), ctx);
   assert.equal(r.advertised, false);
   assert.equal(r.grpcPort, null);
-  assert.equal(r.serial, 'emulator-5554', 'subiu normalmente');
+  assert.equal(r.serial, 'emulator-5554', 'started normally');
   const polls = fake.sleeps.filter((ms) => ms === 500);
-  assert.ok(polls.length >= 19 && polls.length <= 21, `poll de ~10 s (${polls.length} x 500 ms)`);
+  assert.ok(polls.length >= 19 && polls.length <= 21, `poll of ~10 s (${polls.length} x 500 ms)`);
   const err = stderr.join('');
   assert.equal(
-    err.split('\n').find((l) => l.includes('nao se anunciou')),
-    `devslim: aviso: emulador nao se anunciou em ${running}: ferramentas que dependem de gRPC (argent screenshot/tap) nao vao enxerga-lo; adb funciona normalmente`,
+    err.split('\n').find((l) => l.includes('did not advertise itself')),
+    `devslim: warning: emulator did not advertise itself in ${running}: tools that rely on gRPC (argent screenshot/tap) will not see it; adb works normally`,
   );
 });
 
-test('up com entrada sem token (ou sem grpc.port) conta como nao anunciado', async () => {
+test('up with an entry without token (or without grpc.port) counts as not advertised', async () => {
   announce({ token: false });
   const { ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), ctx);
   assert.deepEqual([r.advertised, r.grpcPort], [false, 8554]);
-  assert.match(stderr.join(''), /nao se anunciou/);
+  assert.match(stderr.join(''), /did not advertise itself/);
   noLeak(r);
 });
 
-test('up --no-grpc (perfil grpc false): sem -grpc na linha, sem espera, sem aviso', async () => {
+test('up --no-grpc (profile grpc false): no -grpc in the line, no wait, no warning', async () => {
   const { fake, ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile({ grpc: false }), ctx);
   assert.ok(!fake.spawnCalls[0].args.includes('-grpc') && !fake.spawnCalls[0].args.includes('-grpc-use-token'));
   assert.equal(r.advertised, false);
-  assert.ok(!stderr.join('').includes('nao se anunciou'));
+  assert.ok(!stderr.join('').includes('did not advertise itself'));
   assert.equal(fake.sleeps.filter((ms) => ms === 500).length, 0);
 });
 
-test('up com runningDir null (plataforma sem diretorio conhecido): nao espera, avisa sem caminho', async () => {
+test('up with runningDir null (platform without a known directory): does not wait, warns without a path', async () => {
   const { fake, ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), { ...ctx, runningDir: null });
   assert.equal(r.advertised, false);
   assert.equal(fake.sleeps.filter((ms) => ms === 500).length, 0);
-  assert.match(stderr.join(''), /nao se anunciou em \(diretorio de anuncio desconhecido nesta plataforma\)/);
+  assert.match(stderr.join(''), /did not advertise itself in \(advertisement directory unknown on this platform\)/);
 });
 
-test('up com o AVD ja rodando: le o anuncio uma vez, sem aviso', async () => {
+test('up with the AVD already running: reads the advertisement once, no warning', async () => {
   announce({ serial: 5556, grpc: 8556 });
   const { ctx, env } = world({ emulators: [{ avd: AVD, port: 5556, pid: 777 }] });
   recordSession({ platform: 'android', avd: AVD, serial: 'emulator-5556', pid: 777, port: 5556, startedAt: 'x' }, env);
@@ -597,12 +597,12 @@ test('up com o AVD ja rodando: le o anuncio uma vez, sem aviso', async () => {
   noLeak(r);
 });
 
-test('up: pid_<pid>.ini anunciado de emulador morto nao conta; espera e avisa', async () => {
+test('up: an advertised pid_<pid>.ini of a dead emulator does not count; waits and warns', async () => {
   announce({ pid: 61000 });
   const { fake, ctx } = world();
   const r = await upAvd(AVD, buildAndroidProfile(), { ...ctx, pidAlive: (pid) => pid !== 61000 });
   assert.deepEqual([r.advertised, r.grpcPort], [false, null]);
-  assert.ok(fake.sleeps.filter((ms) => ms === 500).length >= 19, 'esperou o anuncio');
-  assert.match(stderr.join(''), /nao se anunciou/);
-  assert.ok(existsSync(join(running, 'pid_61000.ini')), 'arquivo do emulador intacto');
+  assert.ok(fake.sleeps.filter((ms) => ms === 500).length >= 19, 'waited for the advertisement');
+  assert.match(stderr.join(''), /did not advertise itself/);
+  assert.ok(existsSync(join(running, 'pid_61000.ini')), 'emulator file intact');
 });

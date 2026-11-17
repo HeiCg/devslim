@@ -1,17 +1,17 @@
 import type { Exec } from '../exec.ts';
 
-// Quem lancou o emulador que esta rodando, pela linha de comando do qemu (sem
-// adb). O devslim nao marca o guest; reconhece por assinatura:
-// - devslim: sessao do devslim registra o AVD como vivo, ou a linha tem
-//   -memory e -cores e nao tem -netfast (buildLaunchArgs nunca emite -netfast);
-// - argent: -netfast e -crash-report-mode never (medido no tool-server dele);
-// - other: o resto (Android Studio, emulator na mao).
+// Who launched the running emulator, from the qemu command line (no
+// adb). devslim does not mark the guest; it recognizes a signature:
+// - devslim: the devslim session records the AVD as alive, or the line has
+//   -memory and -cores and no -netfast (buildLaunchArgs never emits -netfast);
+// - argent: -netfast and -crash-report-mode never (measured on its tool-server);
+// - other: everything else (Android Studio, emulator by hand).
 
 export type Launcher = 'devslim' | 'argent' | 'other';
 
 const tokens = (cmdline: string) => cmdline.split(/\s+/).filter((t) => t !== '');
 
-// Funcao pura. `inSession`: a sessao do devslim registra este AVD como vivo.
+// Pure function. `inSession`: the devslim session records this AVD as alive.
 export function classifyLauncher(cmdline: string, inSession = false): Launcher {
   if (inSession) return 'devslim';
   const t = tokens(cmdline);
@@ -24,8 +24,8 @@ export function classifyLauncher(cmdline: string, inSession = false): Launcher {
 
 export type QemuProcess = Readonly<{ pid: number; avd: string; cmdline: string }>;
 
-// `pgrep -fl qemu-system`: "<pid> <linha de comando>". So linhas cujo binario e
-// qemu-system-* e que tem `-avd <nome>`.
+// `pgrep -fl qemu-system`: "<pid> <command line>". Only lines whose binary is
+// qemu-system-* and that have `-avd <name>`.
 export function parseQemuProcesses(text: string): QemuProcess[] {
   const out: QemuProcess[] = [];
   for (const line of text.split(/\r?\n/)) {
@@ -50,22 +50,22 @@ async function stdoutOf(exec: Exec, cmd: string, args: string[]): Promise<string
   }
 }
 
-// Todo qemu de emulador rodando. Falha (ou nada rodando) = lista vazia.
+// Every running emulator qemu. Failure (or nothing running) = empty list.
 export async function listQemuProcesses(exec: Exec): Promise<QemuProcess[]> {
   const out = await stdoutOf(exec, 'pgrep', ['-fl', 'qemu-system']);
   return out === null ? [] : parseQemuProcesses(out);
 }
 
-// `ps -o command= -p <pid>`; null se o processo sumiu ou o ps falhou.
+// `ps -o command= -p <pid>`; null if the process is gone or ps failed.
 export async function processCommandLine(pid: number, exec: Exec): Promise<string | null> {
   const out = await stdoutOf(exec, 'ps', ['-o', 'command=', '-p', String(pid)]);
   const line = out?.trim();
   return line === undefined || line === '' ? null : line;
 }
 
-// Launcher de um AVD rodando. Linha de comando: da lista do pgrep (por pid ou
-// nome), senao `ps` pelo pid. Sem linha: 'devslim' se a sessao o registra,
-// senao null (nao deu para saber).
+// Launcher of a running AVD. Command line: from the pgrep list (by pid or
+// name), else `ps` by pid. No line: 'devslim' if the session records it,
+// else null (could not tell).
 export async function launcherFor(
   avd: string,
   o: { exec: Exec; pid: number | null; inSession: boolean; processes?: readonly QemuProcess[] },
@@ -77,5 +77,5 @@ export async function launcherFor(
 }
 
 export function launcherText(l: Launcher): string {
-  return l === 'argent' ? 'lancado por argent' : l === 'other' ? 'lancado por fora do devslim' : 'lancado pelo devslim';
+  return l === 'argent' ? 'launched by argent' : l === 'other' ? 'launched outside devslim' : 'launched by devslim';
 }

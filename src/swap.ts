@@ -1,9 +1,9 @@
 import { DevslimError } from './errors.ts';
 import type { Exec } from './exec.ts';
 
-// Swap do macOS: fonte unica dos limites usados por `doctor`, `android up`,
-// `android bake` e `ios up`. Acima de SWAP_WARN_PERCENT avisa; acima de
-// SWAP_FAIL_PERCENT o doctor da fail e os comandos que bootam recusam sem --force.
+// macOS swap: single source of the thresholds used by `doctor`, `android up`,
+// `android bake` and `ios up`. Above SWAP_WARN_PERCENT it warns; above
+// SWAP_FAIL_PERCENT doctor fails and the commands that boot refuse without --force.
 
 export const SWAP_WARN_PERCENT = 80;
 export const SWAP_FAIL_PERCENT = 95;
@@ -18,13 +18,13 @@ function toMb(num: string, unit: string): number {
     case 'K': return n / 1024;
     case 'G': return n * 1024;
     case 'T': return n * 1024 * 1024;
-    default: return n; // M (ou sem sufixo)
+    default: return n; // M (or no suffix)
   }
 }
 
-// `total = 18432.00M  used = 17704.94M  free = 727.06M  (encrypted)`; aceita virgula decimal.
-// Sem arquivo de swap ainda o macOS reporta `total = 0.00M  used = 0.00M`:
-// leitura valida, ratio 0. Total 0 com uso acima de 0 nao faz sentido: ratio null.
+// `total = 18432.00M  used = 17704.94M  free = 727.06M  (encrypted)`; accepts a decimal comma.
+// With no swap file yet macOS reports `total = 0.00M  used = 0.00M`:
+// valid reading, ratio 0. Total 0 with usage above 0 makes no sense: ratio null.
 export function parseSwapUsage(text: string): SwapUsage | null {
   const field = (name: string) => new RegExp(`${name}\\s*=\\s*(\\d+(?:[.,]\\d+)?)\\s*([KMGT]?)`, 'i').exec(text);
   const total = field('total');
@@ -38,7 +38,7 @@ export function parseSwapUsage(text: string): SwapUsage | null {
 
 export type SwapStatus = Readonly<{ usedMb: number | null; totalMb: number | null; percent: number | null }>;
 
-// `sysctl -n vm.swapusage`; qualquer falha = campos null, nunca erro.
+// `sysctl -n vm.swapusage`; any failure = null fields, never an error.
 export async function readSwap(exec: Exec): Promise<SwapStatus> {
   try {
     const res = await exec('sysctl', ['-n', 'vm.swapusage'], { timeoutMs: 10_000 });
@@ -47,7 +47,7 @@ export async function readSwap(exec: Exec): Promise<SwapStatus> {
       return Object.freeze({ usedMb: round1(u.usedMb), totalMb: round1(u.totalMb), percent: u.ratio === null ? null : round1(u.ratio * 100) });
     }
   } catch {
-    // cai no nulo
+    // fall through to null
   }
   return Object.freeze({ usedMb: null, totalMb: null, percent: null });
 }
@@ -55,31 +55,31 @@ export async function readSwap(exec: Exec): Promise<SwapStatus> {
 export type SwapLevel = 'ok' | 'warn' | 'fail';
 export type SwapAssessment = Readonly<{ level: SwapLevel; message: string; fix?: string }>;
 
-export const SWAP_FAIL_FIX = 'feche apps, sessoes e devices ociosos antes de subir device';
-export const SWAP_WARN_FIX = 'feche algo antes de subir device';
+export const SWAP_FAIL_FIX = 'close idle apps, sessions and devices before starting a device';
+export const SWAP_WARN_FIX = 'close something before starting a device';
 
-// Sem arquivo de swap (total 0): nada em uso.
-export const NO_SWAP_FILE_TEXT = '0 MB em uso (sem arquivo de swap)';
+// No swap file (total 0): nothing in use.
+export const NO_SWAP_FILE_TEXT = '0 MB in use (no swap file)';
 
-// Mesmo texto no doctor e na recusa do boot. `percent` null = nao lido (warn).
+// Same text in doctor and in the boot refusal. `percent` null = not read (warn).
 export function assessSwap(s: SwapStatus): SwapAssessment {
-  if (s.percent === null) return Object.freeze({ level: 'warn', message: 'sysctl vm.swapusage nao lido' });
-  if (s.totalMb === 0) return Object.freeze({ level: 'ok', message: `swap com ${NO_SWAP_FILE_TEXT}` });
-  const text = `swap em ${s.percent}% (${s.usedMb} de ${s.totalMb} MB)`;
-  if (s.percent > SWAP_FAIL_PERCENT) return Object.freeze({ level: 'fail', message: `${text}: nao boote device agora`, fix: SWAP_FAIL_FIX });
-  if (s.percent > SWAP_WARN_PERCENT) return Object.freeze({ level: 'warn', message: `${text}: acima de ${SWAP_WARN_PERCENT}%`, fix: SWAP_WARN_FIX });
+  if (s.percent === null) return Object.freeze({ level: 'warn', message: 'sysctl vm.swapusage not read' });
+  if (s.totalMb === 0) return Object.freeze({ level: 'ok', message: `swap with ${NO_SWAP_FILE_TEXT}` });
+  const text = `swap at ${s.percent}% (${s.usedMb} of ${s.totalMb} MB)`;
+  if (s.percent > SWAP_FAIL_PERCENT) return Object.freeze({ level: 'fail', message: `${text}: do not boot a device now`, fix: SWAP_FAIL_FIX });
+  if (s.percent > SWAP_WARN_PERCENT) return Object.freeze({ level: 'warn', message: `${text}: above ${SWAP_WARN_PERCENT}%`, fix: SWAP_WARN_FIX });
   return Object.freeze({ level: 'ok', message: text });
 }
 
-// Antes de bootar: fail sem --force = erro; fail com --force e warn = aviso em
-// stderr; swap nao lido segue em silencio (o doctor e quem aponta).
+// Before booting: fail without --force = error; fail with --force and warn = warning on
+// stderr; unread swap proceeds silently (doctor is the one that reports it).
 export async function swapGate(opts: { exec: Exec; stderr: (t: string) => void; force: boolean; action: string }): Promise<SwapStatus> {
   const s = await readSwap(opts.exec);
   if (s.percent === null) return s;
   const a = assessSwap(s);
   if (a.level === 'fail' && !opts.force) {
-    throw new DevslimError(`${opts.action} recusado: ${a.message}; ${a.fix} (--force para bootar mesmo assim)`);
+    throw new DevslimError(`${opts.action} refused: ${a.message}; ${a.fix} (--force to boot anyway)`);
   }
-  if (a.level !== 'ok') opts.stderr(`devslim: aviso: ${a.message}${a.level === 'fail' ? ' (--force: bootando mesmo assim)' : ''}\n`);
+  if (a.level !== 'ok') opts.stderr(`devslim: warning: ${a.message}${a.level === 'fail' ? ' (--force: booting anyway)' : ''}\n`);
   return s;
 }

@@ -31,30 +31,30 @@ function world(opts: FakeAndroidOptions = {}) {
   return { fake, adb };
 }
 
-test('guarda recusa com emulador rodando e lista o que esta rodando', async () => {
+test('guard refuses with an emulator running and lists what is running', async () => {
   const { fake, adb } = world({ emulators: [{ avd: 'bench-api35', port: 5556, state: 'offline' }] });
   await assert.rejects(assertSingleDevice({ adb, exec: fake.exec, action: 'up' }), (err: unknown) => {
     assert.ok(err instanceof DevslimError);
-    assert.match(err.message, /^up recusado: ja ha device rodando: emulador emulator-5556 \(offline\)/);
+    assert.match(err.message, /^up refused: a device is already running: emulator emulator-5556 \(offline\)/);
     assert.match(err.message, /--force/);
     return true;
   });
 });
 
-test('guarda recusa com simulador iOS bootado', async () => {
+test('guard refuses with an iOS simulator booted', async () => {
   const { fake, adb } = world({ simulators: [{ udid: 'AAAA-1111', name: 'iPhone 17' }] });
-  await assert.rejects(assertSingleDevice({ adb, exec: fake.exec, action: 'bake' }), /bake recusado: .*simulador iPhone 17 AAAA-1111/);
+  await assert.rejects(assertSingleDevice({ adb, exec: fake.exec, action: 'bake' }), /bake refused: .*simulator iPhone 17 AAAA-1111/);
   assert.ok(fake.exec.calls.some((c) => c.cmd === 'xcrun' && c.args.join(' ') === 'simctl list devices booted -j'));
 });
 
-test('guarda passa com --force e devolve o censo', async () => {
+test('guard passes with --force and returns the census', async () => {
   const { fake, adb } = world({ emulators: [{ avd: 'x', port: 5554 }], simulators: [{ udid: 'U', name: 'S' }] });
   const c = await assertSingleDevice({ adb, exec: fake.exec, action: 'up', force: true });
   assert.equal(c.emulators.length, 1);
   assert.equal(c.simulators.length, 1);
 });
 
-test('guarda passa sem nada rodando; device fisico no adb nao conta como emulador', async () => {
+test('guard passes with nothing running; a physical device in adb does not count as an emulator', async () => {
   const clean = world();
   assert.deepEqual(await assertSingleDevice({ adb: clean.adb, exec: clean.fake.exec, action: 'up' }), { emulators: [], simulators: [] });
 
@@ -65,15 +65,15 @@ test('guarda passa sem nada rodando; device fisico no adb nao conta como emulado
   assert.deepEqual(await assertSingleDevice({ adb, exec: phone, action: 'up' }), { emulators: [], simulators: [] });
 });
 
-test('falha do xcrun = lista vazia', async () => {
+test('xcrun failure = empty list', async () => {
   const { fake } = world({ xcrunFails: true });
   assert.deepEqual(await bootedSimulators(fake.exec), []);
-  const throwing = async () => { throw new DevslimError('comando nao encontrado: xcrun'); };
+  const throwing = async () => { throw new DevslimError('command not found: xcrun'); };
   assert.deepEqual(await bootedSimulators(throwing), []);
-  assert.deepEqual(await bootedSimulators(async () => ({ code: 0, signal: null, stdout: 'nao e json', stderr: '' })), []);
+  assert.deepEqual(await bootedSimulators(async () => ({ code: 0, signal: null, stdout: 'not json', stderr: '' })), []);
 });
 
-test('parseSimctlBooted pega so Booted', () => {
+test('parseSimctlBooted takes only Booted', () => {
   const json = JSON.stringify({
     devices: {
       'com.apple.CoreSimulator.SimRuntime.iOS-26-4': [
@@ -85,7 +85,7 @@ test('parseSimctlBooted pega so Booted', () => {
   assert.deepEqual(parseSimctlBooted(json), [{ udid: 'A', name: 'iPhone 17', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-4' }]);
 });
 
-test('parseSwapUsage: formato do macOS, virgula decimal e sufixos M/G', () => {
+test('parseSwapUsage: macOS format, decimal comma and M/G suffixes', () => {
   const a = parseSwapUsage('total = 18432.00M  used = 17704.94M  free = 727.06M  (encrypted)')!;
   assert.equal(a.totalMb, 18432);
   assert.equal(a.usedMb, 17704.94);
@@ -96,26 +96,26 @@ test('parseSwapUsage: formato do macOS, virgula decimal e sufixos M/G', () => {
   const g = parseSwapUsage('total = 2,00G  used = 1,75G  free = 0,25G')!;
   assert.equal(g.totalMb, 2048);
   assert.equal(g.usedMb, 1792);
-  // macOS sem arquivo de swap ainda: total 0 e leitura valida, 0%.
+  // macOS with no swap file yet: total 0 is a valid reading, 0%.
   assert.deepEqual(parseSwapUsage('total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)'), { totalMb: 0, usedMb: 0, ratio: 0 });
-  assert.equal(parseSwapUsage('lixo'), null);
+  assert.equal(parseSwapUsage('garbage'), null);
 });
 
-test('aviso de swap em stderr acima de 80%, sem bloquear; abaixo, silencio', async () => {
+test('swap warning on stderr above 80%, non-blocking; below it, silence', async () => {
   const msgs: string[] = [];
   const high = world({ swap: 'total = 18432.00M  used = 17704.94M  free = 727.06M  (encrypted)' });
   const u = await swapWarning({ exec: high.fake.exec, stderr: (t) => msgs.push(t) });
   assert.ok(u !== null && u.ratio! > 0.8);
   assert.equal(msgs.length, 1);
-  assert.match(msgs[0], /aviso: swap em 96% \(17\.3 de 18\.0 GB\)/);
+  assert.match(msgs[0], /warning: swap at 96% \(17\.3 of 18\.0 GB\)/);
   assert.deepEqual(high.fake.exec.calls.map((c) => [c.cmd, ...c.args]), [['sysctl', '-n', 'vm.swapusage']]);
 
-  const low = world({ swap: 'total = 18432,00M  used = 14745,60M  free = 3686,40M  (encrypted)' }); // 80% exato
+  const low = world({ swap: 'total = 18432,00M  used = 14745,60M  free = 3686,40M  (encrypted)' }); // exactly 80%
   await swapWarning({ exec: low.fake.exec, stderr: (t) => msgs.push(t) });
   assert.equal(msgs.length, 1);
 });
 
-test('sessao: registra, substitui por AVD/serial, remove; arquivo em state/session.json', () => {
+test('session: records, replaces by AVD/serial, removes; file at state/session.json', () => {
   const env = { DEVSLIM_HOME: home };
   assert.deepEqual(loadSession(env), []);
   const e = { platform: 'android' as const, avd: 'a', serial: 'emulator-5554', pid: 1, port: 5554, startedAt: 't' };
@@ -129,13 +129,13 @@ test('sessao: registra, substitui por AVD/serial, remove; arquivo em state/sessi
   assert.deepEqual(loadSession(env).map((x) => x.avd), ['b']);
 });
 
-test('findAvdSerial pergunta o nome a cada emulador', async () => {
-  const { adb } = world({ emulators: [{ avd: 'outro', port: 5554 }, { avd: 'slim-api35', port: 5556 }] });
+test('findAvdSerial asks each emulator for its name', async () => {
+  const { adb } = world({ emulators: [{ avd: 'other', port: 5554 }, { avd: 'slim-api35', port: 5556 }] });
   assert.equal(await findAvdSerial(adb, 'slim-api35'), 'emulator-5556');
-  assert.equal(await findAvdSerial(adb, 'nao-roda'), null);
+  assert.equal(await findAvdSerial(adb, 'not-running'), null);
 });
 
-test('waitForExit: serial some e locks somem; lock teimoso volta como lingering', async () => {
+test('waitForExit: serial and locks disappear; a stubborn lock comes back as lingering', async () => {
   const { fake, adb } = world({ emulators: [{ avd: 'a', port: 5554 }] });
   const avdDir = join(home, 'a.avd');
   mkdirSync(join(avdDir, 'hardware-qemu.ini.lock'), { recursive: true });

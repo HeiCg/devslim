@@ -1,12 +1,12 @@
 import { join } from 'node:path';
 import { DevslimError } from '../errors.ts';
 
-// System images do `create`. Atalho = tag; vira
-// system-images;android-<api>;<tag>;<abi> com a ABI do host.
-// Trade-off medido (2026-11-17, API 35, 2 min parado, uma medicao cada):
-// aosp_atd 3660 MB de phys_footprint contra 4343 MB do google_apis. ATD tira os
-// servicos Google (aosp_atd) ou os reduz (google_atd): no aosp_atd nao ha login
-// Google, push FCM nem compra Play Billing.
+// System images for `create`. Shortcut = tag; becomes
+// system-images;android-<api>;<tag>;<abi> with the host ABI.
+// Measured trade-off (2026-11-17, API 35, 2 min idle, one measurement each):
+// aosp_atd 3660 MB of phys_footprint vs 4343 MB for google_apis. ATD drops
+// Google services (aosp_atd) or reduces them (google_atd): aosp_atd has no Google
+// sign-in, FCM push or Play Billing purchases.
 export const IMAGE_SHORTCUTS = Object.freeze(['google_apis', 'google_atd', 'aosp_atd', 'default'] as const);
 export type ImageShortcut = (typeof IMAGE_SHORTCUTS)[number];
 export const DEFAULT_API = 35;
@@ -14,7 +14,7 @@ export const DEFAULT_SHORTCUT: ImageShortcut = 'google_apis';
 
 const ID_PREFIX = 'system-images;';
 
-// arm64 (Apple Silicon) = arm64-v8a; qualquer outro host = x86_64.
+// arm64 (Apple Silicon) = arm64-v8a; any other host = x86_64.
 export function hostAbi(arch: string = process.arch): 'arm64-v8a' | 'x86_64' {
   return arch === 'arm64' ? 'arm64-v8a' : 'x86_64';
 }
@@ -23,29 +23,29 @@ export function isShortcut(value: string): value is ImageShortcut {
   return (IMAGE_SHORTCUTS as readonly string[]).includes(value);
 }
 
-// Id completo passa como veio (e nao combina com api); atalho expande;
-// ausente = google_apis.
+// A full id passes through as given (and conflicts with api); a shortcut expands;
+// absent = google_apis.
 export function resolveImage(image: string | undefined, o: { api?: number; arch?: string } = {}): string {
   const value = image ?? DEFAULT_SHORTCUT;
   if (value.startsWith(ID_PREFIX)) {
-    if (o.api !== undefined) throw new DevslimError(`--api so vale com atalho de imagem (${IMAGE_SHORTCUTS.join(', ')}); o id completo ja traz a API: ${value}`);
+    if (o.api !== undefined) throw new DevslimError(`--api only applies to an image shortcut (${IMAGE_SHORTCUTS.join(', ')}); the full id already includes the API: ${value}`);
     return value;
   }
   if (!isShortcut(value)) {
-    throw new DevslimError(`imagem desconhecida: ${value} (atalhos: ${IMAGE_SHORTCUTS.join(', ')}; ou o id completo system-images;android-N;tag;abi)`);
+    throw new DevslimError(`unknown image: ${value} (shortcuts: ${IMAGE_SHORTCUTS.join(', ')}; or the full id system-images;android-N;tag;abi)`);
   }
   const api = o.api ?? DEFAULT_API;
-  if (!Number.isInteger(api) || api < 1) throw new DevslimError(`API invalida: ${api} (inteiro positivo, ex. 35)`);
+  if (!Number.isInteger(api) || api < 1) throw new DevslimError(`invalid API: ${api} (positive integer, e.g. 35)`);
   return `${ID_PREFIX}android-${api};${value};${hostAbi(o.arch)}`;
 }
 
-// Diretorio da imagem dentro do SDK: <sdk>/system-images/android-35/aosp_atd/arm64-v8a.
+// Image directory inside the SDK: <sdk>/system-images/android-35/aosp_atd/arm64-v8a.
 export function imageDir(sdkRoot: string, id: string): string {
   return join(sdkRoot, ...id.split(';'));
 }
 
-// Tag da imagem de um AVD: tag.id do config.ini; sem ele, o segmento depois de
-// android-N no image.sysdir.1 (relativo ou absoluto). null = nao deu para saber.
+// Image tag of an AVD: tag.id from config.ini; without it, the segment after
+// android-N in image.sysdir.1 (relative or absolute). null = could not tell.
 export function imageTag(cfg: { tagId?: string; sysdir?: string }): string | null {
   const tag = cfg.tagId?.trim();
   if (tag) return tag;
@@ -54,13 +54,13 @@ export function imageTag(cfg: { tagId?: string; sysdir?: string }): string | nul
   return i === -1 || i + 1 >= parts.length ? null : parts[i + 1];
 }
 
-// google_apis e variantes com Play Store: servicos Google completos.
+// google_apis and Play Store variants: full Google services.
 export function isGoogleApisTag(tag: string): boolean {
   return tag === 'google_apis' || tag.startsWith('google_apis_') || tag.includes('playstore');
 }
 
-// Imagens enxutas: ATD (aosp_atd sem servicos Google, google_atd com servicos
-// reduzidos) e default (AOSP puro).
+// Lean images: ATD (aosp_atd without Google services, google_atd with reduced
+// services) and default (plain AOSP).
 export function isAtdTag(tag: string): boolean {
   return tag === 'aosp_atd' || tag === 'google_atd' || tag === 'default';
 }

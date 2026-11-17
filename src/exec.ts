@@ -2,9 +2,9 @@ import { spawn } from 'node:child_process';
 import { closeSync, openSync } from 'node:fs';
 import { DevslimError } from './errors.ts';
 
-// UNICO ponto da lib que cria processo. Todo modulo que precisa de adb,
-// emulator, xcrun etc. recebe um `Exec` por parametro, e os testes injetam
-// um fake (ver createFakeExec).
+// The ONLY place in the lib that creates processes. Every module that needs adb,
+// emulator, xcrun etc. takes an `Exec` parameter, and tests inject
+// a fake (see createFakeExec).
 
 export type ExecOptions = {
   cwd?: string;
@@ -22,7 +22,7 @@ export type ExecResult = Readonly<{
 
 export type Exec = (cmd: string, args: readonly string[], opts?: ExecOptions) => Promise<ExecResult>;
 
-// Implementacao real: sem shell, argumentos passados como lista.
+// Real implementation: no shell, arguments passed as a list.
 export const nodeExec: Exec = (cmd, args, opts = {}) =>
   new Promise((resolve, reject) => {
     const child = spawn(cmd, [...args], {
@@ -36,11 +36,11 @@ export const nodeExec: Exec = (cmd, args, opts = {}) =>
     child.stdout.setEncoding('utf8').on('data', (d: string) => { stdout += d; });
     child.stderr.setEncoding('utf8').on('data', (d: string) => { stderr += d; });
     child.on('error', (err: Error & { code?: string }) => {
-      if (err.code === 'ENOENT') reject(new DevslimError(`comando nao encontrado: ${cmd}`));
+      if (err.code === 'ENOENT') reject(new DevslimError(`command not found: ${cmd}`));
       else reject(err);
     });
     child.on('close', (code, signal) => resolve(Object.freeze({ code, signal, stdout, stderr })));
-    child.stdin.on('error', () => { /* processo pode sair antes de ler stdin */ });
+    child.stdin.on('error', () => { /* the process may exit before reading stdin */ });
     child.stdin.end(opts.input ?? '');
   });
 
@@ -50,8 +50,8 @@ export type SpawnDetachedOptions = {
   env?: Readonly<Record<string, string | undefined>>;
 };
 
-// Processo que sobrevive ao devslim (o emulador): sessao propria, stdout e
-// stderr anexados ao log, sem stdin, e `unref()` para o Node poder sair.
+// Process that outlives devslim (the emulator): its own session, stdout and
+// stderr appended to the log, no stdin, and `unref()` so Node can exit.
 export type SpawnDetached = (cmd: string, args: readonly string[], opts: SpawnDetachedOptions) => Promise<{ pid: number }>;
 
 export const nodeSpawnDetached: SpawnDetached = (cmd, args, opts) =>
@@ -66,22 +66,22 @@ export const nodeSpawnDetached: SpawnDetached = (cmd, args, opts) =>
           stdio: ['ignore', fd, fd],
         });
       } finally {
-        closeSync(fd); // o filho ja herdou o descritor
+        closeSync(fd); // the child already inherited the descriptor
       }
     })();
     child.once('error', (err: Error & { code?: string }) => {
-      if (err.code === 'ENOENT') reject(new DevslimError(`comando nao encontrado: ${cmd}`));
+      if (err.code === 'ENOENT') reject(new DevslimError(`command not found: ${cmd}`));
       else reject(err);
     });
     child.once('spawn', () => {
       child.unref();
-      if (child.pid === undefined) reject(new DevslimError(`spawn de ${cmd} sem pid`));
+      if (child.pid === undefined) reject(new DevslimError(`spawn of ${cmd} without a pid`));
       else resolve({ pid: child.pid });
     });
   });
 
-// Sinal para um processo ja existente (o watcher do auto-desligar). "No such
-// process" (ESRCH) e ignorado; pid invalido (<= 1) nunca e sinalizado.
+// Signal to an existing process (the idle-down watcher). "No such
+// process" (ESRCH) is ignored; an invalid pid (<= 1) is never signaled.
 export type SignalPid = (pid: number, signal: 'SIGTERM') => void;
 
 export const nodeSignalPid: SignalPid = (pid, signal) => {
@@ -96,15 +96,15 @@ export const nodeSignalPid: SignalPid = (pid, signal) => {
 export type FakeCall = { cmd: string; args: string[]; opts: ExecOptions };
 export type FakeHandler = (call: FakeCall) => Partial<ExecResult> | undefined;
 
-// Exec de teste: grava cada chamada e responde pelo handler. Handler que
-// devolve undefined = comando inesperado, e o fake falha alto.
+// Test exec: records each call and answers through the handler. A handler that
+// returns undefined = unexpected command, and the fake fails loudly.
 export function createFakeExec(handler: FakeHandler): Exec & { calls: FakeCall[] } {
   const calls: FakeCall[] = [];
   const exec = (async (cmd: string, args: readonly string[], opts: ExecOptions = {}) => {
     const call = { cmd, args: [...args], opts };
     calls.push(call);
     const res = handler(call);
-    if (res === undefined) throw new Error(`fake exec: chamada inesperada: ${cmd} ${args.join(' ')}`);
+    if (res === undefined) throw new Error(`fake exec: unexpected call: ${cmd} ${args.join(' ')}`);
     return Object.freeze({ code: 0, signal: null, stdout: '', stderr: '', ...res });
   }) as Exec & { calls: FakeCall[] };
   exec.calls = calls;
@@ -113,7 +113,7 @@ export function createFakeExec(handler: FakeHandler): Exec & { calls: FakeCall[]
 
 export type FakeSpawnCall = { cmd: string; args: string[]; opts: SpawnDetachedOptions };
 
-// spawnDetached de teste: grava a chamada e devolve pids crescentes a partir de `firstPid`.
+// Test spawnDetached: records the call and returns increasing pids starting at `firstPid`.
 export function createFakeSpawnDetached(firstPid = 40000): SpawnDetached & { calls: FakeSpawnCall[] } {
   const calls: FakeSpawnCall[] = [];
   let next = firstPid;

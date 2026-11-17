@@ -22,9 +22,9 @@ export type TunePlan = Readonly<{
   profile: AndroidProfile;
   changes: readonly IniChange[];
   emulatorArgs: readonly string[];
-  // O que `tune` apagaria (so quando o config.ini muda).
+  // What `tune` would delete (only when config.ini changes).
   wouldRemove: readonly string[];
-  // Tamanho de snapshots/ quando ele esta em wouldRemove; senao null.
+  // Size of snapshots/ when it is in wouldRemove; else null.
   snapshotsSize: DirSize | null;
   runningLocks: readonly string[];
   configBefore: string;
@@ -53,12 +53,12 @@ function sha256(buf: Uint8Array | string): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 
-// O texto guardado no state tem que reproduzir os bytes exatos do arquivo.
+// The text kept in the state must reproduce the exact file bytes.
 function readUtf8Exact(path: string): string {
   const buf = readFileSync(path);
   const text = buf.toString('utf8');
   if (!Buffer.from(text, 'utf8').equals(buf)) {
-    throw new DevslimError(`${path} nao e UTF-8 valido; nao da para garantir restore byte a byte`);
+    throw new DevslimError(`${path} is not valid UTF-8; cannot guarantee a byte-for-byte restore`);
   }
   return text;
 }
@@ -66,11 +66,11 @@ function readUtf8Exact(path: string): string {
 function refuseIfRunning(avd: AvdInfo, action: string): void {
   const locks = runningLocks(avd.dir);
   if (locks.length > 0) {
-    throw new DevslimError(`AVD ${avd.name} parece estar rodando (${locks.join(', ')} em ${avd.dir}); desligue antes de ${action}`);
+    throw new DevslimError(`AVD ${avd.name} seems to be running (${locks.join(', ')} in ${avd.dir}); shut it down before ${action}`);
   }
 }
 
-// Somente leitura: calcula as mudancas e a linha de comando.
+// Read-only: computes the changes and the command line.
 export function planTune(avdName: string, profile: AndroidProfile, ctx: TuneContext = {}): TunePlan {
   const avd = findAvd(avdName, { env: ctx.env });
   const configBefore = readUtf8Exact(avd.configPath);
@@ -89,10 +89,10 @@ export function planTune(avdName: string, profile: AndroidProfile, ctx: TuneCont
   });
 }
 
-// Backup no state, config.ini atomico, depois apaga artefatos regenerados.
+// Backup in the state, atomic config.ini, then deletes regenerated artifacts.
 export function tuneAvd(avdName: string, profile: AndroidProfile, ctx: TuneContext = {}): TuneResult {
   const plan = planTune(avdName, profile, ctx);
-  refuseIfRunning(plan.avd, 'tunar');
+  refuseIfRunning(plan.avd, 'tuning');
 
   const rec = recordAndroidTune(
     plan.avd.name,
@@ -127,44 +127,44 @@ export function tuneAvd(avdName: string, profile: AndroidProfile, ctx: TuneConte
 
 export type RestoreOptions = RuntimeContext & { configOnly?: boolean };
 
-// Devolve o guest (pacotes e settings do state) e o config.ini byte a byte,
-// apaga snapshots/slim_base (gravado com o perfil tunado) e limpa o state.
-// - pendencia no guest + AVD rodando: unslim, emu kill, espera sair, config.ini.
-// - pendencia + AVD desligado: erro, salvo --config-only (so config.ini; a
-//   pendencia fica no state).
+// Restores the guest (state packages and settings) and config.ini byte for byte,
+// deletes snapshots/slim_base (saved with the tuned profile) and clears the state.
+// - pending guest changes + AVD running: unslim, emu kill, wait for exit, config.ini.
+// - pending + AVD shut down: error, unless --config-only (config.ini only; the
+//   pending changes stay in the state).
 export async function restoreAvd(avdName: string, ctx: RestoreOptions = {}): Promise<RestoreResult> {
   const rt = resolveRuntime(ctx);
   const env = rt.env;
   const avd = findAvd(avdName, { env });
   const state = loadState<AndroidState>('android', avd.name, { env });
   if (state === null || typeof state.originalConfigIni !== 'string') {
-    throw new DevslimError(`sem state de tune para o AVD ${avd.name}; nada a restaurar`);
+    throw new DevslimError(`no tune state for AVD ${avd.name}; nothing to restore`);
   }
   const hash = sha256(state.originalConfigIni);
   if (state.originalConfigSha256 && hash !== state.originalConfigSha256) {
-    throw new DevslimError(`state de ${avd.name} corrompido (sha256 do config.ini original nao confere)`);
+    throw new DevslimError(`state of ${avd.name} is corrupt (original config.ini sha256 does not match)`);
   }
 
   const pendingPackages = planRestore(state.disabledPackages ?? []);
   const pendingSettings = state.settings ?? [];
   const hasPending = pendingPackages.length > 0 || pendingSettings.length > 0;
-  const pendingText = `${pendingPackages.length} pacote(s) desligado(s) e ${pendingSettings.length} setting(s) alterado(s) no guest`;
+  const pendingText = `${pendingPackages.length} disabled package(s) and ${pendingSettings.length} changed setting(s) in the guest`;
   const warnings: string[] = [];
   let unslim: UnslimReport | null = null;
   let keptPending = false;
 
   if (!hasPending) {
-    refuseIfRunning(avd, 'restaurar');
+    refuseIfRunning(avd, 'restoring');
   } else if (ctx.configOnly) {
-    refuseIfRunning(avd, 'restaurar');
+    refuseIfRunning(avd, 'restoring');
     keptPending = true;
-    warnings.push(`--config-only: ${pendingText} continuam no state; para desfazer: devslim android up ${avd.name} e depois devslim android restore ${avd.name}`);
+    warnings.push(`--config-only: ${pendingText} remain in the state; to undo them: devslim android up ${avd.name} and then devslim android restore ${avd.name}`);
   } else {
     const adb = rt.adb();
     const serial = await findAvdSerial(adb, avd.name);
     if (serial === null) {
       throw new DevslimError(
-        `AVD ${avd.name} tem ${pendingText} e esta desligado; rode antes devslim android up ${avd.name} (e repita o restore) ou passe --config-only`,
+        `AVD ${avd.name} has ${pendingText} and is shut down; first run devslim android up ${avd.name} (and repeat the restore) or pass --config-only`,
       );
     }
     unslim = await unslimRunningDevice(serial, { adb, saved: { disabledPackages: pendingPackages, settings: pendingSettings } });
@@ -172,13 +172,13 @@ export async function restoreAvd(avdName: string, ctx: RestoreOptions = {}): Pro
     recordAndroidGuest(avd.name, { disabledPackages: left.disabledPackages, settings: left.settings, now: rt.date() }, { env });
     if (left.disabledPackages.length > 0 || left.settings.length > 0) {
       const what = [...unslim.failedPackages.map((f) => f.pkg), ...unslim.failedSettings.map((s) => `${s.ns}/${s.key}`)];
-      throw new DevslimError(`restore parcial de ${avd.name}: falhou ${what.join(', ')}; state guarda o que falta, emulador ${serial} segue rodando`);
+      throw new DevslimError(`partial restore of ${avd.name}: failed ${what.join(', ')}; the state keeps what is left, emulator ${serial} is still running`);
     }
     await adb.emuKill(serial);
     const exit = await waitForExit({ adb, serial, avdDir: avd.dir, sleep: rt.sleep, now: rt.now, timeoutMs: rt.exitTimeoutMs, pollMs: rt.pollMs });
     removeSession((e) => e.platform === 'android' && e.serial === serial, env);
     if (exit.lingeringLocks.length > 0) {
-      throw new DevslimError(`guest de ${avd.name} restaurado, mas o emulador ainda segura ${exit.lingeringLocks.join(', ')}; repita o restore quando sair`);
+      throw new DevslimError(`guest of ${avd.name} restored, but the emulator still holds ${exit.lingeringLocks.join(', ')}; repeat the restore once it exits`);
     }
   }
 

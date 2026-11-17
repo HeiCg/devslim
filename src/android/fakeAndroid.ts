@@ -2,25 +2,25 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFakeExec, type ExecResult, type FakeCall, type FakeSpawnCall, type SignalPid, type SpawnDetached } from '../exec.ts';
 
-// Mundo Android falso para testes: um SDK ficticio, emuladores em memoria,
-// relogio e sleep falsos. Nenhum processo real e criado. Responde a adb,
-// emulator (via spawnDetached), avdmanager, xcrun, sysctl, footprint, ps e pgrep.
+// Fake Android world for tests: a fictitious SDK, in-memory emulators,
+// fake clock and sleep. No real process is created. Answers adb,
+// emulator (via spawnDetached), avdmanager, xcrun, sysctl, footprint, ps and pgrep.
 
 export type FakeEmulatorInit = {
   avd: string;
   port: number;
-  state?: string; // padrao 'device'
+  state?: string; // default 'device'
   installed?: readonly string[];
   disabled?: readonly string[];
-  settings?: Readonly<Record<string, string>>; // 'global/key' -> valor
-  bootSteps?: number; // quantos getprop ate sys.boot_completed=1 (padrao 1)
+  settings?: Readonly<Record<string, string>>; // 'global/key' -> value
+  bootSteps?: number; // how many getprop calls until sys.boot_completed=1 (default 1)
   neverBoots?: boolean;
   ignoresKill?: boolean;
-  failPackages?: readonly string[]; // pm disable/enable falha para estes
-  failSettings?: readonly string[]; // 'ns/key' cujo put/delete falha
+  failPackages?: readonly string[]; // pm disable/enable fails for these
+  failSettings?: readonly string[]; // 'ns/key' whose put/delete fails
   dexoptFails?: boolean;
   pid?: number;
-  // Saida de `dumpsys activity activities` (padrao: launcher em primeiro plano).
+  // `dumpsys activity activities` output (default: launcher in the foreground).
   activities?: string;
 };
 
@@ -48,22 +48,22 @@ export type FakeEmulator = {
 
 export type FakeAndroidOptions = {
   sdk?: string;
-  avdHome?: string; // onde o avdmanager falso cria o AVD
+  avdHome?: string; // where the fake avdmanager creates the AVD
   emulators?: readonly FakeEmulatorInit[];
   simulators?: readonly { udid: string; name: string }[];
   xcrunFails?: boolean;
   swap?: string;
-  // Defaults para o emulador que o spawnDetached "sobe".
+  // Defaults for the emulator that spawnDetached "starts".
   spawned?: Omit<FakeEmulatorInit, 'avd' | 'port'>;
   avdmanagerFails?: boolean;
-  // System images "instaladas" no SDK falso (ids completos). Padrao: google_apis
-  // API 35 nas duas ABIs. dirExists responde so por elas.
+  // System images "installed" in the fake SDK (full ids). Default: google_apis
+  // API 35 on both ABIs. dirExists only answers for them.
   systemImages?: readonly string[];
-  // process.arch do host falso (padrao arm64).
+  // process.arch of the fake host (default arm64).
   arch?: string;
-  // Diretorio do AVD, para o snapshot save criar snapshots/<nome>.
+  // AVD directory, so snapshot save creates snapshots/<name>.
   avdDir?: (avd: string) => string | null;
-  // cmdline: resposta de `ps -o command= -p <pid>` (linha do qemu).
+  // cmdline: answer to `ps -o command= -p <pid>` (qemu line).
   host?: { footprint?: string | null; rss?: string | null; pgrep?: string | null; cmdline?: string | null };
   guest?: { meminfo?: string | null; ps?: string | null; dumpsys?: string | null };
 };
@@ -80,7 +80,7 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
   const clock = { t: 0 };
   const sleeps: number[] = [];
   const emulators = new Map<string, FakeEmulator>();
-  // Watchers "vivos" (pid -> linha de comando) e sinais recebidos.
+  // "Live" watchers (pid -> command line) and signals received.
   const watchers = new Map<number, string>();
   const signals: { pid: number; signal: string }[] = [];
   let nextPid = 50000;
@@ -127,7 +127,7 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     if (a0 === 'settings') {
       const id = `${a2}/${a3}`;
       if (a1 === 'get') return ok(`${emu.settings.get(id) ?? 'null'}\n`);
-      if (emu.failSettings.has(id)) return fail(`settings ${a1} falhou para ${id}`, 255);
+      if (emu.failSettings.has(id)) return fail(`settings ${a1} failed for ${id}`, 255);
       if (a1 === 'put') {
         emu.settings.set(id, a4);
         return ok();
@@ -151,14 +151,14 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
       return ok(`Package ${pkg} new state: ${a1 === 'enable' ? 'enabled' : 'disabled-user'}\n`);
     }
     if (a0 === 'cmd' && a1 === 'package' && a2 === 'bg-dexopt-job') {
-      return emu.dexoptFails ? { code: 255, stdout: 'Failure: dexopt job cancelado\n' } : ok('Success\n');
+      return emu.dexoptFails ? { code: 255, stdout: 'Failure: dexopt job cancelled\n' } : ok('Success\n');
     }
     if (a0 === 'am' && a1 === 'kill-all') return ok();
-    if (a0 === 'cat' && a1 === '/proc/meminfo') return opts.guest?.meminfo == null ? fail('sem meminfo') : ok(opts.guest.meminfo);
-    if (a0 === 'ps' && a1 === '-A') return opts.guest?.ps == null ? fail('sem ps') : ok(opts.guest.ps);
+    if (a0 === 'cat' && a1 === '/proc/meminfo') return opts.guest?.meminfo == null ? fail('no meminfo') : ok(opts.guest.meminfo);
+    if (a0 === 'ps' && a1 === '-A') return opts.guest?.ps == null ? fail('no ps') : ok(opts.guest.ps);
     if (a0 === 'dumpsys' && a1 === 'activity' && a2 === 'activities') return ok(emu.activities);
-    if (a0 === 'dumpsys' && a1 === 'meminfo') return opts.guest?.dumpsys == null ? fail('sem dumpsys') : ok(opts.guest.dumpsys);
-    return fail(`/system/bin/sh: ${a0}: inexistente no fake`, 127);
+    if (a0 === 'dumpsys' && a1 === 'meminfo') return opts.guest?.dumpsys == null ? fail('no dumpsys') : ok(opts.guest.dumpsys);
+    return fail(`/system/bin/sh: ${a0}: not in the fake`, 127);
   }
 
   function adb(args: string[]): Partial<ExecResult> | undefined {
@@ -199,7 +199,7 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     const a = call.args;
     if (a[0] !== 'create' || a[1] !== 'avd') return undefined;
     if (opts.avdmanagerFails) return fail('Error: Package path is not valid. Valid system image paths are:', 1);
-    if (call.opts.input !== 'no\n') return fail('esperava "no" no stdin', 3);
+    if (call.opts.input !== 'no\n') return fail('expected "no" on stdin', 3);
     const name = a[a.indexOf('-n') + 1];
     const [, api, tag, abi] = (a[a.indexOf('-k') + 1] ?? '').split(';');
     const home = opts.avdHome;
@@ -227,7 +227,7 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     }
     if (cmd === 'sysctl') return ok(`${opts.swap ?? 'total = 2048.00M  used = 100.00M  free = 1948.00M  (encrypted)'}\n`);
     if (cmd === 'pgrep') return opts.host?.pgrep == null ? { code: 1 } : ok(opts.host.pgrep);
-    if (cmd === 'footprint') return opts.host?.footprint == null ? fail('footprint: falhou', 1) : ok(opts.host.footprint);
+    if (cmd === 'footprint') return opts.host?.footprint == null ? fail('footprint: failed', 1) : ok(opts.host.footprint);
     if (cmd === 'ps' && args.includes('command=') && watchers.has(Number(args[args.length - 1]))) {
       return ok(`${watchers.get(Number(args[args.length - 1]))}\n`);
     }
@@ -246,12 +246,12 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
   const spawnDetached: SpawnDetached = async (cmd, args, o) => {
     spawnCalls.push({ cmd, args: [...args], opts: o });
     if (args.includes('_idle-watch')) {
-      // Watcher do auto-desligar: so ganha pid e linha de comando (para o ps).
+      // Idle-down watcher: only gets a pid and a command line (for ps).
       const pid = nextPid++;
       watchers.set(pid, [cmd, ...args].join(' '));
       return { pid };
     }
-    if (cmd !== tools.emulator) throw new Error(`fake spawnDetached: comando inesperado ${cmd}`);
+    if (cmd !== tools.emulator) throw new Error(`fake spawnDetached: unexpected command ${cmd}`);
     const avd = args[args.indexOf('-avd') + 1];
     const portIdx = args.indexOf('-port');
     const port = portIdx === -1 ? 5554 : Number(args[portIdx + 1]);
@@ -259,7 +259,7 @@ export function createFakeAndroid(opts: FakeAndroidOptions = {}) {
     return { pid: emu.pid };
   };
 
-  // Comandos de device emitidos (sem o caminho do adb), na ordem.
+  // Device commands issued (without the adb path), in order.
   const deviceCommands = () =>
     exec.calls.filter((c) => c.cmd === tools.adb && c.args[0] === '-s').map((c) => c.args.slice(2).join(' '));
 

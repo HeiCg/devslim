@@ -13,14 +13,14 @@ import { parseSwapUsage, SWAP_WARN_PERCENT, type SwapUsage } from '../swap.ts';
 type Env = Readonly<Record<string, string | undefined>>;
 
 // ---------------------------------------------------------------------------
-// Registro do que ESTA lib subiu, para o `down`. Fica em
-// $DEVSLIM_HOME/state/session.json (fora de state/android/ para nao colidir
-// com um AVD chamado "session").
-// iOS usa o mesmo formato: `avd` = nome do simulador, `serial` = UDID,
-// `pid` e `port` = 0 (sem processo nem porta proprios).
+// Record of what THIS lib started, for `down`. Lives in
+// $DEVSLIM_HOME/state/session.json (outside state/android/ so it does not collide
+// with an AVD named "session").
+// iOS uses the same format: `avd` = simulator name, `serial` = UDID,
+// `pid` and `port` = 0 (no process or port of its own).
 
-// Watcher do auto-desligar (`up --idle-down`): ms parado ate desligar, pid do
-// processo `devslim _idle-watch` e quando subiu. Ausente = sem auto-desligar.
+// Idle-down watcher (`up --idle-down`): idle ms before shutdown, pid of the
+// `devslim _idle-watch` process and when it started. Absent = no idle-down.
 export type IdleDownRecord = Readonly<{ ms: number; watcherPid: number; startedAt: string }>;
 
 export type SessionEntry = Readonly<{
@@ -52,30 +52,30 @@ export function loadSession(env: Env = process.env): SessionEntry[] {
     const data = JSON.parse(text) as SessionFile;
     return Array.isArray(data.entries) ? data.entries : [];
   } catch {
-    throw new DevslimError(`state de sessao corrompido (JSON invalido): ${path}`);
+    throw new DevslimError(`corrupt session state (invalid JSON): ${path}`);
   }
 }
 
 // ---------------------------------------------------------------------------
-// Lock consultivo da sessao. `up`, `down` e o watcher do auto-desligar sao
-// processos separados que fazem read-modify-write de session.json; toda escrita
-// passa por withSessionLock (leitura, mudanca e gravacao numa secao critica).
-// O lock e `session.json.lock`, criado com `wx` e com o pid dono e a hora.
-// Mais velho que SESSION_LOCK_STALE_MS ou de pid morto = abandonado: e apagado
-// (se ainda for o mesmo arquivo) e a tomada recomeca. Leitura nao trava: a
-// gravacao e atomica (fsAtomic), quem le ve a sessao inteira antiga ou nova.
+// Advisory session lock. `up`, `down` and the idle-down watcher are
+// separate processes that read-modify-write session.json; every write
+// goes through withSessionLock (read, change and write in one critical section).
+// The lock is `session.json.lock`, created with `wx` holding the owner pid and time.
+// Older than SESSION_LOCK_STALE_MS or with a dead pid = abandoned: it is deleted
+// (if it is still the same file) and acquisition starts over. Reads do not lock: the
+// write is atomic (fsAtomic), a reader sees the whole old or new session.
 
 export const SESSION_LOCK_TIMEOUT_MS = 5_000;
 export const SESSION_LOCK_STALE_MS = 30_000;
 export const SESSION_LOCK_STEP_MS = 50;
 
-// Sincrono de proposito: as funcoes de escrita da sessao sao sincronas e o
-// processo nao tem o que fazer enquanto espera o lock.
+// Synchronous on purpose: the session write functions are synchronous and the
+// process has nothing else to do while waiting for the lock.
 export type SessionLockOptions = {
   sleep?: (ms: number) => void;
   now?: () => number;
   pidAlive?: PidAlive;
-  pid?: number; // dono gravado no lock; padrao process.pid
+  pid?: number; // owner written to the lock; default process.pid
   timeoutMs?: number;
   staleMs?: number;
   stepMs?: number;
@@ -91,8 +91,8 @@ export function sessionLockPath(env: Env = process.env): string {
 
 type HeldLock = { raw: string; pid: number | null; atMs: number | null; token: string | null };
 
-// null = sem arquivo. Conteudo ilegivel (dono acabou de criar e ainda nao
-// escreveu) vem com pid/atMs null; a idade sai do mtime.
+// null = no file. Unreadable content (the owner just created it and has not
+// written yet) comes with pid/atMs null; the age comes from mtime.
 function readLock(path: string): HeldLock | null {
   let raw: string;
   try {
@@ -120,7 +120,7 @@ function lockAgeMs(path: string, held: HeldLock, now: number): number | null {
   try {
     return now - statSync(path).mtimeMs;
   } catch {
-    return null; // sumiu: a proxima volta tenta criar
+    return null; // gone: the next round tries to create it
   }
 }
 
@@ -152,11 +152,11 @@ export function withSessionLock<T>(env: Env, fn: () => T, o: SessionLockOptions 
       break;
     }
     const held = readLock(path);
-    if (held === null) continue; // soltaram entre o open e a leitura
+    if (held === null) continue; // released between the open and the read
     const age = lockAgeMs(path, held, now());
     const stale = (age !== null && age > staleMs) || (held.pid !== null && !pidAlive(held.pid));
     if (stale) {
-      // So apaga se ainda e o mesmo lock abandonado (outro pode ter tomado).
+      // Only deletes if it is still the same abandoned lock (someone else may have taken it).
       if (readLock(path)?.raw === held.raw) {
         try {
           unlinkSync(path);
@@ -168,8 +168,8 @@ export function withSessionLock<T>(env: Env, fn: () => T, o: SessionLockOptions 
     }
     if (now() >= deadline) {
       throw new DevslimError(
-        `sessao ocupada: timeout de ${timeoutMs / 1000} s esperando o lock ${path} (dono pid ${held.pid ?? '?'}); ` +
-          'se esse processo travou, encerre-o ou apague o arquivo',
+        `session busy: timed out after ${timeoutMs / 1000} s waiting for the lock ${path} (owner pid ${held.pid ?? '?'}); ` +
+          'if that process is stuck, kill it or delete the file',
       );
     }
     sleep(stepMs);
@@ -178,12 +178,12 @@ export function withSessionLock<T>(env: Env, fn: () => T, o: SessionLockOptions 
   try {
     return fn();
   } finally {
-    // Solta so o proprio lock: se alguem o julgou abandonado e pos o dele, fica.
+    // Releases only our own lock: if someone judged it abandoned and put theirs, it stays.
     if (readLock(path)?.token === token) {
       try {
         unlinkSync(path);
       } catch {
-        // ja saiu
+        // already gone
       }
     }
   }
@@ -196,8 +196,8 @@ function saveSession(entries: readonly SessionEntry[], env: Env): void {
   writeFileAtomic(path, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
 }
 
-// Uma entrada por AVD e por serial: registrar de novo substitui. No iOS so o
-// UDID identifica (dois simuladores podem ter o mesmo nome).
+// One entry per AVD and per serial: recording again replaces it. On iOS only the
+// UDID identifies (two simulators can share a name).
 export function recordSession(entry: SessionEntry, env: Env = process.env, lock: SessionLockOptions = {}): SessionEntry[] {
   return withSessionLock(env, () => {
     const rest = loadSession(env).filter(
@@ -213,7 +213,7 @@ export function recordSession(entry: SessionEntry, env: Env = process.env, lock:
   }, lock);
 }
 
-// Reescreve as entradas que casam; devolve as novas (vazio = nada gravado).
+// Rewrites the matching entries; returns the new ones (empty = nothing written).
 export function updateSession(
   match: (e: SessionEntry) => boolean,
   update: (e: SessionEntry) => SessionEntry,
@@ -244,7 +244,7 @@ export function removeSession(match: (e: SessionEntry) => boolean, env: Env = pr
 }
 
 // ---------------------------------------------------------------------------
-// Guarda de um device por vez (RESOURCE-POLICY).
+// One-device-at-a-time guard (RESOURCE-POLICY).
 
 export type BootedSimulator = Readonly<{ udid: string; name: string; runtime: string }>;
 
@@ -252,8 +252,8 @@ export async function runningEmulators(adb: Adb): Promise<AdbDevice[]> {
   return (await adb.listDevices()).filter((d) => d.serial.startsWith('emulator-'));
 }
 
-// Espera o emulador sair: serial some do adb e os `*.lock` do AVD somem.
-// Devolve os locks que ainda restarem no fim do prazo (quem chama decide).
+// Waits for the emulator to exit: the serial leaves adb and the AVD `*.lock` files go away.
+// Returns the locks still left at the deadline (the caller decides).
 export async function waitForExit(opts: {
   adb: Adb;
   serial: string;
@@ -274,7 +274,7 @@ export async function waitForExit(opts: {
   }
 }
 
-// Serial do emulador que esta rodando o AVD `avd` (via `adb emu avd name`), ou null.
+// Serial of the emulator running AVD `avd` (via `adb emu avd name`), or null.
 export async function findAvdSerial(adb: Adb, avd: string): Promise<string | null> {
   for (const dev of await runningEmulators(adb)) {
     if ((await adb.avdName(dev.serial)) === avd) return dev.serial;
@@ -293,7 +293,7 @@ export function parseSimctlBooted(json: string): BootedSimulator[] {
   return out;
 }
 
-// Falha do xcrun (sem Xcode, JSON estranho) = lista vazia.
+// xcrun failure (no Xcode, odd JSON) = empty list.
 export async function bootedSimulators(exec: Exec): Promise<BootedSimulator[]> {
   try {
     const res = await exec('xcrun', ['simctl', 'list', 'devices', 'booted', '-j'], { timeoutMs: 30_000 });
@@ -306,8 +306,8 @@ export async function bootedSimulators(exec: Exec): Promise<BootedSimulator[]> {
 
 export type DeviceCensus = Readonly<{ emulators: readonly AdbDevice[]; simulators: readonly BootedSimulator[] }>;
 
-// `adb: null` = sem SDK Android na maquina (nenhum emulador a contar).
-// `exceptUdid`: o simulador alvo, se ja bootado, nao conta contra si mesmo.
+// `adb: null` = no Android SDK on the machine (no emulator to count).
+// `exceptUdid`: the target simulator, if already booted, does not count against itself.
 export async function assertSingleDevice(opts: {
   adb: Adb | null;
   exec: Exec;
@@ -320,17 +320,17 @@ export async function assertSingleDevice(opts: {
   const simulators = (await bootedSimulators(opts.exec)).filter((s) => s.udid.toUpperCase() !== except);
   if (!opts.force && (emulators.length > 0 || simulators.length > 0)) {
     const what = [
-      ...emulators.map((e) => `emulador ${e.serial} (${e.state})`),
-      ...simulators.map((s) => `simulador ${s.name} ${s.udid}`),
+      ...emulators.map((e) => `emulator ${e.serial} (${e.state})`),
+      ...simulators.map((s) => `simulator ${s.name} ${s.udid}`),
     ];
-    throw new DevslimError(`${opts.action} recusado: ja ha device rodando: ${what.join(', ')} (um por vez; --force para ignorar)`);
+    throw new DevslimError(`${opts.action} refused: a device is already running: ${what.join(', ')} (one at a time; --force to ignore)`);
   }
   return Object.freeze({ emulators: Object.freeze(emulators), simulators: Object.freeze(simulators) });
 }
 
 // ---------------------------------------------------------------------------
-// Aviso de swap (nao bloqueia). Limites e parser vivem em ../swap.ts; `up`,
-// `bake` e `ios up` usam swapGate de la, que tambem recusa acima do limite.
+// Swap warning (non-blocking). Thresholds and parser live in ../swap.ts; `up`,
+// `bake` and `ios up` use swapGate from there, which also refuses above the threshold.
 
 export { parseSwapUsage, type SwapUsage } from '../swap.ts';
 export const SWAP_WARN_RATIO = SWAP_WARN_PERCENT / 100;
@@ -346,7 +346,7 @@ export async function swapWarning(opts: { exec: Exec; stderr: (t: string) => voi
   if (usage !== null && usage.ratio !== null && usage.ratio > SWAP_WARN_RATIO) {
     const gb = (mb: number) => (mb / 1024).toFixed(1);
     opts.stderr(
-      `devslim: aviso: swap em ${Math.round(usage.ratio * 100)}% (${gb(usage.usedMb)} de ${gb(usage.totalMb)} GB); feche algo antes de subir device\n`,
+      `devslim: warning: swap at ${Math.round(usage.ratio * 100)}% (${gb(usage.usedMb)} of ${gb(usage.totalMb)} GB); close something before starting a device\n`,
     );
   }
   return usage;

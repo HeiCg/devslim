@@ -1,11 +1,11 @@
 devslim
-Este projeto inclui dados derivados de software de terceiros, listados abaixo
-com os respectivos avisos de licenca.
+This project includes data derived from third-party software, listed below
+with their respective license notices.
 
 ================================================================================
 avdslim (https://github.com/kdbhalala/avdslim)
-Usado em: src/android/packages.ts (nomes de pacote e agrupamento em categorias,
-transcritos de internal/bloat/packages.go; descricoes reescritas).
+Used in: src/android/packages.ts (package names and grouping into categories,
+transcribed from internal/bloat/packages.go; descriptions rewritten).
 ================================================================================
 
 MIT License
@@ -32,12 +32,12 @@ SOFTWARE.
 
 ================================================================================
 simslim (https://github.com/MobAI-App/simslim)
-Usado em: src/ios/labels.ts (labels launchd, agrupamento nas 16 categorias,
-labels sempre ligados e lista de proibidos, transcritos de profiles.go e
-profiles_test.go; mapa capacidade -> daemons conferido com features.go;
-descricoes reescritas). Tecnica do store disabled.plist, fallback launchctl e
-medicao da arvore do launchd_sim reimplementadas a partir de disabled_store.go,
-simctl.go, slim.go e measure.go.
+Used in: src/ios/labels.ts (launchd labels, grouping into the 16 categories,
+always-enabled labels and the forbidden list, transcribed from profiles.go and
+profiles_test.go; capability -> daemons map checked against features.go;
+descriptions rewritten). The disabled.plist store technique, the launchctl
+fallback and the launchd_sim tree measurement were reimplemented from
+disabled_store.go, simctl.go, slim.go and measure.go.
 ================================================================================
 
 MIT License

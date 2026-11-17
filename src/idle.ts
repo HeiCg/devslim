@@ -6,33 +6,33 @@ import type { Runtime } from './android/deps.ts';
 import { loadSession, updateSession, type IdleDownRecord, type SessionEntry } from './android/session.ts';
 import { devslimHome } from './state.ts';
 
-// Auto-desligar (`up --idle-down <dur>`): um processo destacado (`devslim
-// _idle-watch`) olha o device a cada 30 s e, depois de <dur> sem app de
-// terceiro em primeiro plano, desliga pelo mesmo caminho do `down`. Aqui ficam
-// as partes puras (duracao, parse do primeiro plano, laco) e o registro do
-// watcher na sessao; o processo em si esta em idleWatch.ts.
+// Idle-down (`up --idle-down <dur>`): a detached process (`devslim
+// _idle-watch`) checks the device every 30 s and, after <dur> with no
+// third-party app in the foreground, shuts it down the same way as `down`. This file
+// holds the pure parts (duration, foreground parsing, loop) and the watcher
+// record in the session; the process itself lives in idleWatch.ts.
 
 export const IDLE_MIN_MS = 2 * 60_000;
 export const IDLE_POLL_MS = 30_000;
 export const MAX_PROBE_FAILURES = 3;
 export const IDLE_WATCH_CMD = '_idle-watch';
 
-// bin/devslim deste checkout: o watcher roda o mesmo codigo do `up`.
+// bin/devslim of this checkout: the watcher runs the same code as `up`.
 export const DEVSLIM_BIN = fileURLToPath(new URL('../bin/devslim', import.meta.url));
 
 const DURATION_RE = /^(\d{1,9})([smh]?)$/;
 const UNIT_MS: Readonly<Record<string, number>> = Object.freeze({ s: 1000, m: 60_000, h: 3_600_000, '': 60_000 });
 
-// `30m`, `90s`, `1h` ou numero puro (minutos). Minimo 2 minutos.
+// `30m`, `90s`, `1h` or a bare number (minutes). Minimum 2 minutes.
 export function parseIdleDuration(text: string): number {
   const m = DURATION_RE.exec(text);
-  if (m === null) throw new UsageError(`--idle-down exige duracao como 30m, 90s, 1h ou minutos (numero puro), recebeu: ${text}`);
+  if (m === null) throw new UsageError(`--idle-down requires a duration like 30m, 90s, 1h or minutes (bare number), got: ${text}`);
   const ms = Number(m[1]) * UNIT_MS[m[2]];
-  if (ms < IDLE_MIN_MS) throw new UsageError(`--idle-down minimo 2m, recebeu: ${text}`);
+  if (ms < IDLE_MIN_MS) throw new UsageError(`--idle-down minimum is 2m, got: ${text}`);
   return ms;
 }
 
-// 5400000 -> "1h30m"; 150000 -> "2m30s"; arredonda para o segundo.
+// 5400000 -> "1h30m"; 150000 -> "2m30s"; rounds to the second.
 export function formatDuration(ms: number): string {
   const total = Math.round(ms / 1000);
   const h = Math.floor(total / 3600);
@@ -43,17 +43,17 @@ export function formatDuration(ms: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// O que esta em primeiro plano
+// What is in the foreground
 
-// Launcher e apps do sistema nao contam como uso.
+// Launcher and system apps do not count as use.
 export function isSystemPackage(pkg: string): boolean {
   return pkg.startsWith('com.android.') || pkg.startsWith('com.google.android.') || pkg.startsWith('android');
 }
 
-// Linhas `topResumedActivity=ActivityRecord{<hash> u0 <pkg>/<activity> t5}`
-// (Android 10+) e `mResumedActivity: ...`/`ResumedActivity: ...` (por display,
-// e grafia antiga) de `dumpsys activity activities`. Vazio ou ilegivel = nada
-// em primeiro plano (parado). Mais de um (tela dividida): qualquer terceiro e uso.
+// Lines `topResumedActivity=ActivityRecord{<hash> u0 <pkg>/<activity> t5}`
+// (Android 10+) and `mResumedActivity: ...`/`ResumedActivity: ...` (per display,
+// and older spelling) from `dumpsys activity activities`. Empty or unreadable = nothing
+// in the foreground (idle). More than one (split screen): any third-party app counts as use.
 const RESUMED_RE = /ResumedActivity\s*[=:]\s*ActivityRecord\{[^\s}]+\s+(?:u\d+\s+)?([A-Za-z][A-Za-z0-9_.]*)\//g;
 
 export function androidForeground(dumpsys: string): { active: boolean; packages: string[] } {
@@ -61,8 +61,8 @@ export function androidForeground(dumpsys: string): { active: boolean; packages:
   return { active: packages.some((p) => !isSystemPackage(p)), packages };
 }
 
-// `launchctl list` do simulador: `UIKitApplication:<bundle>[...]` e app
-// rodando. Bundle fora de `com.apple.` = uso.
+// Simulator `launchctl list`: `UIKitApplication:<bundle>[...]` is a running
+// app. A bundle outside `com.apple.` = use.
 const UIKIT_RE = /UIKitApplication:([^\s[]+)/g;
 
 export function iosForeground(launchctlList: string): { active: boolean; apps: string[] } {
@@ -71,7 +71,7 @@ export function iosForeground(launchctlList: string): { active: boolean; apps: s
 }
 
 // ---------------------------------------------------------------------------
-// Laco do watcher
+// Watcher loop
 
 export type IdleProbe = 'active' | 'idle' | 'gone';
 export type IdleOwnership = 'owned' | 'session-gone' | 'session-changed' | 'watcher-removed';
@@ -81,17 +81,17 @@ export type IdleLoopResult = Readonly<{ reason: IdleStopReason; idleForMs: numbe
 export type IdleLoopOptions = {
   idleMs: number;
   pollMs?: number;
-  probe: () => Promise<IdleProbe>; // excecao = falha do probe
-  owner: () => Promise<IdleOwnership>; // a entrada da sessao ainda e deste watcher?
-  shutdown: () => Promise<void>; // excecao = shutdown-failed
+  probe: () => Promise<IdleProbe>; // exception = probe failure
+  owner: () => Promise<IdleOwnership>; // is the session entry still owned by this watcher?
+  shutdown: () => Promise<void>; // exception = shutdown-failed
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   log?: (msg: string) => void;
 };
 
-// A cada `pollMs`: confere o dono, sonda o device. Uso zera o relogio; falha
-// do probe nao zera nem conta. Desliga so com `idleMs` inteiros parado e o dono
-// conferido de novo logo antes. Qualquer outra saida nunca chama shutdown.
+// Every `pollMs`: checks the owner, probes the device. Use resets the clock; a probe
+// failure neither resets nor counts. Shuts down only after a full `idleMs` idle with the owner
+// checked again right before. Any other exit never calls shutdown.
 export async function idleLoop(o: IdleLoopOptions): Promise<IdleLoopResult> {
   const pollMs = o.pollMs ?? IDLE_POLL_MS;
   let lastActive = o.now();
@@ -108,7 +108,7 @@ export async function idleLoop(o: IdleLoopOptions): Promise<IdleLoopResult> {
       failures = 0;
     } catch (err) {
       failures++;
-      o.log?.(`probe falhou (${failures}/${MAX_PROBE_FAILURES}): ${(err as Error).message}`);
+      o.log?.(`probe failed (${failures}/${MAX_PROBE_FAILURES}): ${(err as Error).message}`);
       if (failures >= MAX_PROBE_FAILURES) return stop('probe-failed', (err as Error).message);
       continue;
     }
@@ -131,13 +131,13 @@ export async function idleLoop(o: IdleLoopOptions): Promise<IdleLoopResult> {
 }
 
 // ---------------------------------------------------------------------------
-// Registro do watcher na sessao
+// Watcher record in the session
 
 export type IdlePlatform = 'android' | 'ios';
 
 const ID_RE = /^[A-Za-z0-9._-]+$/;
 
-// Android: id = nome do AVD. iOS: id = UDID.
+// Android: id = AVD name. iOS: id = UDID.
 export function sessionMatcher(platform: IdlePlatform, id: string): (e: SessionEntry) => boolean {
   return platform === 'android'
     ? (e) => e.platform === 'android' && e.avd === id
@@ -152,8 +152,8 @@ export function idleLogFile(id: string, env: Runtime['env']): string {
   return join(devslimHome(env), 'logs', `idle-${id}.log`);
 }
 
-// O pid ainda e o nosso watcher? Confere a linha de comando (`ps -o command=`)
-// para nunca mandar sinal a um processo que herdou o pid.
+// Is the pid still our watcher? Checks the command line (`ps -o command=`)
+// so we never signal a process that inherited the pid.
 async function isOurWatcher(pid: number, e: SessionEntry, rt: Runtime): Promise<boolean> {
   if (!Number.isInteger(pid) || pid <= 1) return false;
   try {
@@ -164,8 +164,8 @@ async function isOurWatcher(pid: number, e: SessionEntry, rt: Runtime): Promise<
   }
 }
 
-// SIGTERM no watcher registrado na entrada (se for mesmo ele e nao for este
-// processo) e tira o campo da sessao. Pid morto ou reaproveitado: so limpa.
+// SIGTERM to the watcher registered in the entry (if it really is it and not this
+// process) and removes the field from the session. Dead or reused pid: just cleans up.
 export async function stopIdleWatcher(e: SessionEntry, rt: Runtime): Promise<'stopped' | 'not-running' | 'self' | 'none'> {
   const w = e.idleDown;
   if (w === undefined || w === null) return 'none';
@@ -176,7 +176,7 @@ export async function stopIdleWatcher(e: SessionEntry, rt: Runtime): Promise<'st
       rt.signalPid(w.watcherPid, 'SIGTERM');
       out = 'stopped';
     } catch (err) {
-      rt.stderr(`devslim: aviso: SIGTERM no watcher de auto-desligar (pid ${w.watcherPid}) falhou: ${(err as Error).message}\n`);
+      rt.stderr(`devslim: warning: SIGTERM to the idle-down watcher (pid ${w.watcherPid}) failed: ${(err as Error).message}\n`);
     }
   }
   const match = sessionMatcher(e.platform, sessionIdOf(e));
@@ -186,10 +186,10 @@ export async function stopIdleWatcher(e: SessionEntry, rt: Runtime): Promise<'st
 
 export type IdleWatcherInfo = Readonly<{ ms: number; watcherPid: number; startedAt: string; logFile: string }>;
 
-// Sobe o watcher para o device da sessao (substitui o anterior). null = o
-// device nao esta na sessao (o devslim nao o subiu): nada e lancado.
+// Starts the watcher for the session device (replaces the previous one). null = the
+// device is not in the session (devslim did not start it): nothing is launched.
 export async function startIdleWatcher(platform: IdlePlatform, id: string, ms: number, rt: Runtime): Promise<IdleWatcherInfo | null> {
-  if (!ID_RE.test(id)) throw new UsageError(`id invalido para auto-desligar: ${id}`);
+  if (!ID_RE.test(id)) throw new UsageError(`invalid id for idle-down: ${id}`);
   const match = sessionMatcher(platform, id);
   const entry = loadSession(rt.env).find(match);
   if (entry === undefined) return null;
@@ -206,13 +206,13 @@ export async function startIdleWatcher(platform: IdlePlatform, id: string, ms: n
 }
 
 export function idleUpLine(w: IdleWatcherInfo): string {
-  return `auto-desligar: apos ${formatDuration(w.ms)} sem app em uso (watcher pid ${w.watcherPid}, log ${w.logFile})`;
+  return `idle-down: after ${formatDuration(w.ms)} with no app in use (watcher pid ${w.watcherPid}, log ${w.logFile})`;
 }
 
-// `why`: motivo concreto (ex. simulador ja bootado e enxuto, que o up nao reboota).
+// `why`: concrete reason (e.g. simulator already booted and slim, which up does not reboot).
 export function idleSkippedWarning(what: string, why?: string): string {
-  if (why !== undefined) return `devslim: aviso: auto-desligar ignorado: ${what}: ${why} (nada na sessao)\n`;
-  return `devslim: aviso: auto-desligar ignorado: ${what} nao foi subido pelo devslim (nada na sessao)\n`;
+  if (why !== undefined) return `devslim: warning: idle-down ignored: ${what}: ${why} (nothing in the session)\n`;
+  return `devslim: warning: idle-down ignored: ${what} was not started by devslim (nothing in the session)\n`;
 }
 
-export const IOS_ALREADY_SLIM_REASON = 'simulador ja estava bootado e enxuto; devslim nao o subiu';
+export const IOS_ALREADY_SLIM_REASON = 'simulator was already booted and slim; devslim did not start it';

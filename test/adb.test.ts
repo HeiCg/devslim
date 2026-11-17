@@ -19,7 +19,7 @@ function setup(handler: FakeHandler) {
   return { adb, exec, sleeps, clock };
 }
 
-test('parseAdbDevices: device, offline, unauthorized, daemon e vazio', () => {
+test('parseAdbDevices: device, offline, unauthorized, daemon and empty', () => {
   const text = [
     '* daemon not running; starting now at tcp:5037',
     '* daemon started successfully',
@@ -46,7 +46,7 @@ test('serialForPort / portForSerial', () => {
   assert.equal(portForSerial('R58M123ABC'), null);
 });
 
-test('todo comando de device leva -s <serial>', async () => {
+test('every device command carries -s <serial>', async () => {
   const { adb, exec } = setup(() => ({ stdout: '0\n' }));
   await adb.getSetting('emulator-5554', 'global', 'auto_sync');
   await adb.putSetting('emulator-5554', 'global', 'auto_sync', '0');
@@ -64,13 +64,13 @@ test('todo comando de device leva -s <serial>', async () => {
   ]);
 });
 
-test('getSetting: "null" = ausente', async () => {
+test('getSetting: "null" = absent', async () => {
   const { adb } = setup(({ args }) => ({ stdout: args.includes('a') ? 'null\n' : '1.0\r\n' }));
   assert.equal(await adb.getSetting('emulator-5554', 'global', 'a'), null);
   assert.equal(await adb.getSetting('emulator-5554', 'global', 'b'), '1.0');
 });
 
-test('putSetting recusa valor com espaco ou metacaractere de shell', async () => {
+test('putSetting refuses values with spaces or shell metacharacters', async () => {
   const { adb, exec } = setup(() => ({}));
   await assert.rejects(adb.putSetting('emulator-5554', 'global', 'k', 'a b'), DevslimError);
   await assert.rejects(adb.putSetting('emulator-5554', 'global', 'k', 'x;rm -rf /'), DevslimError);
@@ -78,7 +78,7 @@ test('putSetting recusa valor com espaco ou metacaractere de shell', async () =>
   assert.equal(exec.calls.length, 0);
 });
 
-test('listPackages e listDisabledPackages tiram o prefixo package:', async () => {
+test('listPackages and listDisabledPackages strip the package: prefix', async () => {
   const { adb, exec } = setup(({ args }) =>
     args.includes('-d') ? { stdout: 'package:com.b\r\n' } : { stdout: 'package:com.a\npackage:com.b\n\n' },
   );
@@ -87,7 +87,7 @@ test('listPackages e listDisabledPackages tiram o prefixo package:', async () =>
   assert.deepEqual(exec.calls.map((c) => c.args.slice(2).join(' ')), ['shell pm list packages', 'shell pm list packages -d']);
 });
 
-test('disablePackages: falha num pacote nao aborta o lote; coleta e relata', async () => {
+test('disablePackages: a failure on one package does not abort the batch; collects and reports', async () => {
   const { adb, exec } = setup(({ args }) => {
     const pkg = args[args.length - 1];
     if (pkg === 'com.ruim') return { code: 255, stderr: "Exception occurred while executing 'disable-user':\njava.lang.IllegalArgumentException: Unknown package: com.ruim" };
@@ -109,7 +109,7 @@ test('enablePackage = pm enable <pkg>', async () => {
   assert.deepEqual(exec.calls[0].args.slice(2), ['shell', 'pm', 'enable', 'com.a']);
 });
 
-test('waitForBoot: espera aparecer como device e sys.boot_completed=1, com sleep falso', async () => {
+test('waitForBoot: waits to show up as device and sys.boot_completed=1, with fake sleep', async () => {
   let devicesCalls = 0;
   let getprops = 0;
   const { adb, sleeps } = setup(({ args }) => {
@@ -129,14 +129,14 @@ test('waitForBoot: espera aparecer como device e sys.boot_completed=1, com sleep
   assert.equal(res.waitedMs, 1500);
 });
 
-test('waitForBoot: timeout vira DevslimError com o ultimo estado, sem dormir de verdade', async () => {
+test('waitForBoot: timeout becomes DevslimError with the last state, without really sleeping', async () => {
   const { adb, sleeps } = setup(({ args }) =>
     args[0] === 'devices' ? { stdout: 'List of devices attached\nemulator-5554\tdevice\n' } : { stdout: '0\n' },
   );
   const started = Date.now();
   await assert.rejects(adb.waitForBoot('emulator-5554', { timeoutMs: 10_000, pollMs: 2_000 }), (err: unknown) => {
     assert.ok(err instanceof DevslimError);
-    assert.match(err.message, /nao terminou o boot em 10 s/);
+    assert.match(err.message, /did not finish booting within 10 s/);
     assert.match(err.message, /sys\.boot_completed=0/);
     return true;
   });
@@ -144,37 +144,37 @@ test('waitForBoot: timeout vira DevslimError com o ultimo estado, sem dormir de 
   assert.ok(Date.now() - started < 1000);
 });
 
-test('waitForBoot: timeout padrao 180 s', async () => {
+test('waitForBoot: default timeout 180 s', async () => {
   const { adb, clock } = setup(() => ({ stdout: 'List of devices attached\n' }));
   await assert.rejects(adb.waitForBoot('emulator-5554'), /180 s/);
   assert.ok(clock.t >= 180_000 && clock.t < 183_000);
 });
 
-test('waitForGone espera o serial sumir; timeout da erro', async () => {
+test('waitForGone waits for the serial to disappear; timeout errors', async () => {
   let n = 0;
   const { adb } = setup(() => ({ stdout: n++ < 2 ? 'List of devices attached\nemulator-5554\tdevice\n' : 'List of devices attached\n' }));
   assert.equal((await adb.waitForGone('emulator-5554', { pollMs: 1000 })).waitedMs, 2000);
 
   const stuck = setup(() => ({ stdout: 'List of devices attached\nemulator-5554\tdevice\n' }));
-  await assert.rejects(stuck.adb.waitForGone('emulator-5554', { timeoutMs: 3000, pollMs: 1000 }), /continua no adb devices/);
+  await assert.rejects(stuck.adb.waitForGone('emulator-5554', { timeoutMs: 3000, pollMs: 1000 }), /still in adb devices/);
 });
 
-test('emu: avd name, kill e snapshot save (KO = erro)', async () => {
+test('emu: avd name, kill and snapshot save (KO = error)', async () => {
   const { adb, exec } = setup(({ args }) => {
     const what = args.slice(2).join(' ');
     if (what === 'emu avd name') return { stdout: 'slim-api35\r\nOK\r\n' };
     if (what === 'emu avd snapshot save slim_base') return { stdout: 'OK\r\n' };
-    if (what === 'emu avd snapshot save ruim') return { stdout: 'KO: snapshot save failed\r\n' };
+    if (what === 'emu avd snapshot save bad') return { stdout: 'KO: snapshot save failed\r\n' };
     return { stdout: 'OK: killing emulator, bye bye\r\n' };
   });
   assert.equal(await adb.avdName('emulator-5554'), 'slim-api35');
   await adb.snapshotSave('emulator-5554', 'slim_base');
-  await assert.rejects(adb.snapshotSave('emulator-5554', 'ruim'), /snapshot save ruim .*falhou/);
+  await assert.rejects(adb.snapshotSave('emulator-5554', 'bad'), /snapshot save bad .*failed/);
   await adb.emuKill('emulator-5554');
   assert.deepEqual(exec.calls.map((c) => c.args.join(' ')), [
     '-s emulator-5554 emu avd name',
     '-s emulator-5554 emu avd snapshot save slim_base',
-    '-s emulator-5554 emu avd snapshot save ruim',
+    '-s emulator-5554 emu avd snapshot save bad',
     '-s emulator-5554 emu kill',
   ]);
 });

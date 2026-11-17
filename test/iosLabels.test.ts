@@ -17,7 +17,7 @@ import {
 
 const allEntries = () => CATEGORY_IDS.flatMap((id) => CATEGORIES[id]);
 
-test('16 categorias, todas com texto do que quebra', () => {
+test('16 categories, all with a what-breaks text', () => {
   assert.deepEqual([...CATEGORY_IDS], [
     'widgets', 'siri', 'search', 'icloud', 'store', 'pim', 'web', 'family',
     'health', 'photos', 'apps', 'messaging', 'connectivity', 'telemetry', 'mdm', 'other',
@@ -28,17 +28,17 @@ test('16 categorias, todas com texto do que quebra', () => {
   }
 });
 
-test('invariante: nenhum FORBIDDEN e nenhum ALWAYS_ENABLED em categoria alguma', () => {
+test('invariant: no FORBIDDEN and no ALWAYS_ENABLED in any category', () => {
   const all = new Set(allEntries());
-  for (const l of FORBIDDEN) assert.ok(!all.has(l), `proibido em categoria: ${l}`);
-  for (const l of ALWAYS_ENABLED) assert.ok(!all.has(l), `always-enabled em categoria: ${l}`);
+  for (const l of FORBIDDEN) assert.ok(!all.has(l), `forbidden in category: ${l}`);
+  for (const l of ALWAYS_ENABLED) assert.ok(!all.has(l), `always-enabled in category: ${l}`);
   const managed = managedSet();
   for (const l of [...FORBIDDEN, ...ALWAYS_ENABLED]) assert.ok(!managed.has(l), l);
   assert.equal(FORBIDDEN.length, 15);
   assert.deepEqual([...ALWAYS_ENABLED], ['com.apple.assistantd', 'com.apple.gamed', 'com.apple.sharingd']);
 });
 
-test('repairSet = ALWAYS_ENABLED, disjunto do managedSet; touchableSet = uniao; labelsToDisable nunca devolve um ALWAYS_ENABLED', () => {
+test('repairSet = ALWAYS_ENABLED, disjoint from managedSet; touchableSet = union; labelsToDisable never returns an ALWAYS_ENABLED', () => {
   assert.deepEqual([...repairSet()].sort(), [...ALWAYS_ENABLED].sort());
   const managed = managedSet();
   for (const l of repairSet()) assert.ok(!managed.has(l), l);
@@ -50,17 +50,17 @@ test('repairSet = ALWAYS_ENABLED, disjunto do managedSet; touchableSet = uniao; 
     ...CATEGORY_IDS.map((id) => labelsToDisable({ except: [id] })),
   ];
   for (const list of everyProfile) for (const l of ALWAYS_ENABLED) assert.ok(!list.includes(l), l);
-  assert.throws(() => labelsToDisable({ keep: ['com.apple.gamed'] }), /fora da lista gerida/);
+  assert.throws(() => labelsToDisable({ keep: ['com.apple.gamed'] }), /outside the managed list/);
 });
 
-test('todo label comeca com com.apple. e nao repete dentro da categoria', () => {
+test('every label starts with com.apple. and does not repeat within its category', () => {
   for (const id of CATEGORY_IDS) {
-    assert.equal(new Set(CATEGORIES[id]).size, CATEGORIES[id].length, `repetido em ${id}`);
+    assert.equal(new Set(CATEGORIES[id]).size, CATEGORIES[id].length, `repeated in ${id}`);
     for (const l of CATEGORIES[id]) assert.match(l, /^com\.apple\.[A-Za-z0-9._-]+$/, l);
   }
 });
 
-test('contagem: 179 entradas, 173 labels unicos geridos; repetidos so os 6 compartilhados de proposito', () => {
+test('count: 179 entries, 173 unique managed labels; repeats only the 6 shared on purpose', () => {
   const all = allEntries();
   assert.equal(all.length, 179);
   assert.equal(managedSet().size, 173);
@@ -78,7 +78,7 @@ test('contagem: 179 entradas, 173 labels unicos geridos; repetidos so os 6 compa
   assert.ok([...counts.values()].every((n) => n <= 2));
 });
 
-test('perfil padrao desliga todo o managedSet, ordenado', () => {
+test('default profile disables the whole managedSet, sorted', () => {
   const all = labelsToDisable();
   assert.equal(all.length, 173);
   assert.deepEqual(all, [...managedSet()].sort());
@@ -86,34 +86,34 @@ test('perfil padrao desliga todo o managedSet, ordenado', () => {
   assert.ok(all.includes('com.apple.swcd'));
 });
 
-test('cada capacidade religa o esperado', () => {
+test('each capability re-enables what is expected', () => {
   const base = new Set(labelsToDisable());
-  const religa = (cap: (typeof CAPABILITIES)[number]) => [...base].filter((l) => !labelsToDisable({ capabilities: [cap] }).includes(l)).sort();
+  const reenabled = (cap: (typeof CAPABILITIES)[number]) => [...base].filter((l) => !labelsToDisable({ capabilities: [cap] }).includes(l)).sort();
 
-  assert.deepEqual(religa('push'), ['com.apple.apsd']);
-  assert.deepEqual(religa('weblogin'), [...CATEGORIES.web].sort());
-  assert.ok(religa('weblogin').includes('com.apple.swcd'));
-  assert.deepEqual(religa('camera'), [...CATEGORIES.photos].sort());
-  assert.deepEqual(religa('audio'), []);
-  assert.deepEqual(religa('window'), []);
-  // location: locationd e geod nao sao geridos; so o XPC do MapKit publico volta.
-  assert.deepEqual(religa('location'), ['com.apple.MapKit.SnapshotService']);
-  for (const l of ['com.apple.locationd', 'com.apple.geod']) assert.ok(!managedSet().has(l), `${l} fora da lista gerida`);
-  const store = religa('store');
+  assert.deepEqual(reenabled('push'), ['com.apple.apsd']);
+  assert.deepEqual(reenabled('weblogin'), [...CATEGORIES.web].sort());
+  assert.ok(reenabled('weblogin').includes('com.apple.swcd'));
+  assert.deepEqual(reenabled('camera'), [...CATEGORIES.photos].sort());
+  assert.deepEqual(reenabled('audio'), []);
+  assert.deepEqual(reenabled('window'), []);
+  // location: locationd and geod are not managed; only the public MapKit XPC comes back.
+  assert.deepEqual(reenabled('location'), ['com.apple.MapKit.SnapshotService']);
+  for (const l of ['com.apple.locationd', 'com.apple.geod']) assert.ok(!managedSet().has(l), `${l} outside the managed list`);
+  const store = reenabled('store');
   assert.deepEqual(store, [...new Set([...CATEGORIES.store, ...CATEGORIES.icloud])].sort());
-  // StoreKit (features.go): passd e financed ficam ligados mesmo listados tambem em `other`.
+  // StoreKit (features.go): passd and financed stay enabled even though also listed in `other`.
   for (const l of ['com.apple.storekitd', 'com.apple.itunesstored', 'com.apple.appstored', 'com.apple.passd', 'com.apple.financed', 'com.apple.akd']) {
     assert.ok(store.includes(l), l);
   }
   assert.deepEqual(Object.keys(CAPABILITY_KEEPS).sort(), [...CAPABILITIES].sort());
 });
 
-test('except mantem a categoria inteira, inclusive labels compartilhados; keep mantem labels avulsos', () => {
+test('except keeps the whole category, including shared labels; keep keeps individual labels', () => {
   const r = labelsToDisable({ except: ['widgets'], keep: ['com.apple.triald', 'com.apple.triald'] });
   for (const l of CATEGORIES.widgets) assert.ok(!r.includes(l), l);
-  assert.ok(!r.includes('com.apple.navd'), 'navd tambem esta em connectivity, mas widgets mantido o segura');
+  assert.ok(!r.includes('com.apple.navd'), 'navd is also in connectivity, but kept widgets holds it');
   assert.ok(!r.includes('com.apple.triald'));
   assert.equal(r.length, 173 - 4 - 1);
-  assert.throws(() => labelsToDisable({ except: ['nada'] }), (e: unknown) => e instanceof DevslimError && /categoria desconhecida: nada/.test(e.message));
-  assert.throws(() => labelsToDisable({ keep: ['com.apple.sleepd'] }), /label fora da lista gerida: com\.apple\.sleepd/);
+  assert.throws(() => labelsToDisable({ except: ['nothing'] }), (e: unknown) => e instanceof DevslimError && /unknown category: nothing/.test(e.message));
+  assert.throws(() => labelsToDisable({ keep: ['com.apple.sleepd'] }), /label outside the managed list: com\.apple\.sleepd/);
 });
