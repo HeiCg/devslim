@@ -477,6 +477,8 @@ Android, API 35 arm64, pixel_7:
 | devslim `--ram 1536`, sem lowram | 2560 MB (elevada) | 4469 MB | 311 |
 | devslim `--aggressive` (1536 e `-lowram`) | 1536 MB | 3444 MB | 290 |
 | devslim padrao em imagem `aosp_atd` | 2560 MB | 3660 MB | 262 |
+| devslim padrao em imagem `google_atd` | 2560 MB | 4687 MB | 277 |
+| devslim padrao em imagem `aosp_atd` API 30 | 2048 MB | 2398 MB | 223 |
 
 O que as linhas mostram:
 
@@ -485,6 +487,12 @@ O que as linhas mostram:
   `--ram 2048` e `--ram 1536` sozinhos nao valem.
 - Tela menor nao baixa o piso: a RAM efetiva ficou em 2560 MB.
 - Imagem sem servicos Google economiza mais ou menos o mesmo que o lowram.
+- `google_atd` (servicos Google reduzidos) nao rendeu no host: ficou na faixa
+  do `google_apis` enxuto, embora o guest usasse menos RAM (760 MB).
+- `aosp_atd` API 30 foi a linha mais leve: o emulador respeitou 2048 MB sem
+  lowram (o piso de 2560 MB e da API 35) e o host ficou em 2398 MB. Serve para
+  teste de UI e logica quando o `minSdk` do app aceita API 30; nao valida
+  comportamento de Android 15.
 - No guest, o Google Play Services usou 391 MB de PSS e o Gboard
   (`com.google.android.inputmethod.latin`) 81 MB.
 
